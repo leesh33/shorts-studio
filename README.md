@@ -29,7 +29,7 @@
 | 레퍼런스 읽기 | 유튜브 영상 페이지에서 제목·길이·설명글·태그를 가져옵니다(oEmbed → Data API 폴백). 자동 자막(timedtext)은 시도하되, 유튜브가 서명/POT 제한으로 빈 응답을 주면 **시도 기록만 남기고** 표준 템포로 계속합니다. |
 | DNA 분석 | **`GEMINI_API_KEY` 가 있으면** Gemini 가 레퍼런스 영상을 `fileData.fileUri` 로 직접 보고 훅 공식·템포·자막 스타일·말투를 읽습니다(영상 입력이 막히면 메타데이터·자막 텍스트로 재시도). 키가 없으면 로컬 계산(훅 유형·문장 길이·분당 어절·컷 수)으로 대체합니다. |
 | 대본 | Gemini 가 6~8컷 한국어 대본 + 영어 9:16 장면 프롬프트를 씁니다. 응답이 형식에 못 미치면(컷 6개 미만·JSON 깨짐·시간 초과) **로컬 엔진 대본으로 조용히 폴백**하고 `mode: "template"` 으로 표시합니다. 확인되지 않은 숫자·일정은 지어내지 말라는 규칙을 프롬프트에 넣고, 컷마다 `확인:` 줄을 남깁니다. |
-| 이미지 | `GEMINI_API_KEY` 가 있으면 컷별 9:16 실사 장면을 생성해 data URL 로 돌려줍니다(Gemini 이미지 모델 → 없으면 Imagen `predict` 폴백). 키가 없으면 배너로 안내하고 그라데이션 장면을 유지합니다. 함수 응답 한도(4.5MB)를 넘는 이미지는 413 으로 알립니다. |
+| 이미지 | **빌링 없이 무료로 동작합니다.** ① `GEMINI_API_KEY` 가 있으면 Gemini 이미지 모델을 먼저 시도하고(나중에 빌링을 켜면 자동으로 Gemini 결과가 쓰임), ② 429(무료 등급 이미지 한도 0)·404·장애면 **무료 제공자로 자동 폴백**합니다 — Pollinations(`image.pollinations.ai`, 실측 5초·`image/jpeg`·576×1024) → HF FLUX.1-schnell Space(실측 9초·`image/webp`·720×1280). ③ 바이트는 **서버에서** 받아 `data:` URL 로 돌려주므로 브라우저 캔버스가 오염되지 않고 🎬 영상 다운로드에 CORS 오류가 없습니다. ④ 익명 Pollinations 는 **IP당 45초에 1장**이라, 화면은 막힌 컷만 서버가 알려준 초만큼 쉬었다가 최대 4차까지 다시 보냅니다. 그래도 안 되면 컷별로 정직한 오류(`429 free-busy` + `retryAfterMs`)를 보여 줍니다 — 가짜 성공 없음. 무료 이미지에는 제공자 워터마크가 하단 1~2%에 작게 붙고, 플레이어·영상에서는 안전 영역(하단 5%)을 잘라 프레임 밖으로 보냅니다. 함수 응답 한도(4.5MB)를 넘는 이미지는 413 으로 알립니다. |
 | 영상 | 브라우저 안에서 실시간 렌더(약 대본 길이만큼 걸립니다). **음성 트랙은 들어가지 않습니다** — Web Speech 출력은 캔버스로 녹화할 수 없습니다. MediaRecorder WebM 은 길이 메타데이터(duration)를 파일에 쓰지 않아 일부 편집기에서 재생 시간이 ∞ 로 보일 수 있습니다(브라우저 재생·업로드는 정상). |
 | 음성 | 브라우저 음성 미리듣기만. 실제 TTS 엔진은 이 범위 밖입니다. |
 
@@ -44,11 +44,11 @@ POST /api/analyze-and-generate
 
 POST /api/generate-image
 { "prompt": "English 9:16 photoreal prompt", "aspectRatio": "9:16", "cutId": "cut-3" }
-→ { ok: true, image: "data:image/png;base64,…", mimeType, model, ms, cutId }
-  · 키 없음 → 503 { error: "gemini-not-configured" }
-  · 한도 → 429, 모델 실패 → 502 { attempts: [...] }, 너무 큼 → 413
+→ { ok: true, image: "data:image/jpeg;base64,…", mimeType, model, provider, seed, free, ms, cutId }
+  · provider: "gemini" | "pollinations-free" | "hf-flux-free"
+  · 무료 경로가 모두 막힘 → 429 { error: "free-busy", retryAfterMs }, 실패 → 502, 너무 큼 → 413
 
-GET  /api/generate-image → { ok, hasGeminiKey, models, imagens }   (키 값은 없음)
+GET  /api/generate-image → { ok, hasGeminiKey, models, imagens, freeProviders }   (키 값은 없음)
 GET  /api/health         → { ok, app, hasYoutubeKey, hasGeminiKey, geminiModel, imageModel, node }
 ```
 
@@ -56,7 +56,7 @@ GET  /api/health         → { ok, app, hasYoutubeKey, hasGeminiKey, geminiModel
 
 | 이름 | 쓰임 |
 | --- | --- |
-| `GEMINI_API_KEY` | Gemini 대본·이미지. 없으면 앱은 로컬 엔진 + 그라데이션으로 계속 동작하고 화면에 안내 배너가 뜹니다. |
+| `GEMINI_API_KEY` | Gemini 대본·이미지. **이미지에는 없어도 됩니다** — 없으면 무료 제공자로 컷별 장면을 만듭니다. |
 | `GEMINI_MODEL` | 대본 모델 고정(기본: `gemini-2.5-flash-lite` → `gemini-2.5-flash` → `gemini-3.5-flash-lite` → `gemini-2.0-flash` 순 시도) |
 | `GEMINI_IMAGE_MODEL` | 이미지 모델 고정(기본: `gemini-2.5-flash-image` 계열 → `imagen-3.0-generate-002`) |
 | `YOUTUBE_API_KEY` | 있으면 Data API 로 메타데이터를 한 번 더 보강 |
@@ -69,7 +69,7 @@ GET  /api/health         → { ok, app, hasYoutubeKey, hasGeminiKey, geminiModel
 npm install          # tailwindcss (CSS 빌드용 devDependency)
 npm run build:css    # src/tailwind.css → styles.css (빌드 결과를 커밋해 두어 Vercel 빌드 불필요)
 node tools/serve.mjs # http://localhost:4310 (정적 + /api 로컬 실행)
-npm test             # 엔진·Gemini 정규화·API 핸들러 테스트 32개
+npm test             # 엔진·Gemini 정규화·무료 이미지 사다리·API 핸들러 테스트
 ```
 
 ## 구조

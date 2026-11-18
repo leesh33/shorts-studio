@@ -25,7 +25,9 @@ const state = {
 };
 
 /* AI 이미지 생성 상태 — 한 컷씩 순서대로 만듭니다(한도·시간 보호) */
-const ai = { running: false, done: 0, failed: 0, error: '' };
+const ai = { running: false, done: 0, failed: 0, error: '', providers: {}, rounds: 0, total: 0 };
+/** 무료 경로 재시도 횟수 — 익명 Pollinations 한도(45초/1장)를 넘기려면 몇 차례 파도가 필요합니다. */
+const AI_MAX_ROUNDS = 4;
 /* 영상 내보내기 상태 */
 const exporter = { running: false, recorder: null, cancelled: false };
 
@@ -288,17 +290,32 @@ async function loadHealth() {
   updateAiBanner();
 }
 
-/** 키가 없을 때 이유를 숨기지 않고 배너로 알립니다. */
+/** 키가 없어도 이제 무료 경로로 생성됩니다 — 배너는 '지금 무엇으로 만드는지'와 실제 실패만 안내합니다. */
 function updateAiBanner() {
   const banner = $('#aiBanner');
   if (!banner) return;
-  const show = state.hasGeminiKey === false;
-  banner.classList.toggle('hidden', !show);
-  const btn = $('#genImagesBtn');
-  if (btn) {
-    btn.title = show ? 'GEMINI_API_KEY 를 Vercel 에 추가하면 실제 장면 이미지를 만들 수 있습니다.' : '';
-    btn.classList.toggle('opacity-60', show);
+  const title = $('#aiBannerTitle');
+  const body = $('#aiBannerBody');
+
+  const unfinished = Boolean(state.pkg && state.pkg.cuts.some((c) => !c.imageUrl));
+  if (!ai.running && ai.error && unfinished) {
+    banner.className = 'mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-[11px] leading-relaxed text-amber-200';
+    if (title) title.textContent = '일부 컷 장면을 만들지 못했습니다.';
+    if (body) body.textContent = String(ai.error).slice(0, 200);
+    banner.classList.remove('hidden');
+    return;
   }
+  if (state.hasGeminiKey === false) {
+    banner.className = 'mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-[11px] leading-relaxed text-slate-400';
+    if (title) title.textContent = '무료 모드 — 빌링 없이 동작합니다.';
+    if (body) {
+      body.textContent =
+        'GEMINI_API_KEY 가 없어도 컷별 9:16 장면을 무료 제공자(Pollinations · FLUX.1-schnell)로 만듭니다. 서버가 이미지 바이트를 받아 data URL 로 넘기므로 영상 다운로드에 CORS 오류가 없습니다.';
+    }
+    banner.classList.remove('hidden');
+    return;
+  }
+  banner.classList.add('hidden');
 }
 
 function setToolStatus(text, ratio) {
@@ -338,74 +355,177 @@ function applyAllCutImages() {
   state.pkg.cuts.forEach((cut, i) => {
     if (cut.imageUrl) applyCutImage(i);
   });
+  refreshImageBadgeFromPkg();
+}
+
+/** 현재 상태를 배지 문구로 반영합니다(플레이어를 열 때·장면이 이미 있을 때). */
+function refreshImageBadgeFromPkg() {
+  if (!state.pkg || ai.running) return;
+  const total = state.pkg.cuts.length;
+  const made = state.pkg.cuts.filter((c) => c.imageUrl).length;
+  if (made === total) paintImageBadge(`무료 AI 이미지 완료 · ${made}/${total}`, 'ok');
+  else if (made > 0) paintImageBadge(`무료 AI · ${made}/${total} 완료`, 'ok');
+  else paintImageBadge(`무료 AI 이미지 · 0/${total} 준비됨`, 'ok');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
+function providerName(provider) {
+  if (provider === 'gemini') return 'Gemini';
+  if (provider === 'hf-flux-free') return 'FLUX.1-schnell 무료';
+  if (provider === 'pollinations-free') return 'Pollinations 무료';
+  return '무료 AI';
+}
+
+/** 무료 경로가 실제로 쓰인 제공자 요약 — 예: "Pollinations 무료 ×6 · FLUX 무료 ×1" */
+function providerSummary() {
+  return Object.entries(ai.providers)
+    .filter(([, n]) => n > 0)
+    .map(([p, n]) => `${providerName(p)} ×${n}`)
+    .join(' · ');
+}
+
+/** AI 카드 배지 + 9:16 플레이어 안쪽 칩을 같은 문구로 맞춥니다. */
+function paintImageBadge(text, tone = 'ok') {
+  const label = $('#imageProviderText');
+  if (label) {
+    label.textContent = text;
+    label.className = `text-[11px] leading-relaxed ${
+      tone === 'warn' ? 'text-amber-300' : tone === 'busy' ? 'text-violet-300' : 'text-emerald-300'
+    }`;
+  }
+  const dot = $('#imageProviderDot');
+  if (dot) {
+    dot.className = `w-1.5 h-1.5 rounded-full ${tone === 'warn' ? 'bg-amber-400' : tone === 'busy' ? 'bg-violet-400' : 'bg-emerald-400'}${
+      tone === 'busy' ? ' animate-pulse' : ''
+    }`;
+  }
+  const chip = $('#sceneProviderBadge');
+  if (chip) {
+    chip.textContent = text;
+    chip.classList.remove('hidden');
+    chip.classList.toggle('text-amber-300', tone === 'warn');
+    chip.classList.toggle('text-violet-300', tone === 'busy');
+  }
+}
+
+/** 컷 1장 요청 — 서버가 무료 경로까지 시도한 결과를 정직하게 해석합니다. */
+async function requestCutImage(cut) {
+  try {
+    const res = await fetch('/api/generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: cut.visualPrompt, aspectRatio: '9:16', cutId: cut.id }),
+    });
+    const data = await res.json().catch(() => null);
+    if (data?.ok && data.image) return { ok: true, data };
+    const retryAfterMs = Number(data?.retryAfterMs) || 0;
+    const error = String(data?.error || `http-${res.status}`);
+    return {
+      ok: false,
+      error,
+      message: String(data?.message || `HTTP ${res.status}`),
+      // 대기열 혼잡(free-busy)·429·네트워크는 다시 시도할 가치가 있습니다.
+      retryable: error === 'free-busy' || res.status === 429 || res.status >= 500,
+      retryAfterMs: retryAfterMs || (error === 'free-busy' ? 45_000 : 4_000),
+    };
+  } catch (err) {
+    return { ok: false, error: 'network', message: String(err?.message || err), retryable: true, retryAfterMs: 5_000 };
+  }
 }
 
 async function generateCutImages() {
   if (!state.pkg) return;
   if (ai.running) return;
-  if (state.hasGeminiKey === false) {
-    updateAiBanner();
-    toast('GEMINI_API_KEY 가 Vercel 에 없어 AI 이미지를 만들 수 없습니다. 아래 안내를 참고해 주세요.');
-    return;
-  }
 
   const cuts = state.pkg.cuts;
-  const todo = cuts.filter((c) => !c.imageUrl);
-  if (!todo.length) {
+  let pending = cuts.map((cut, i) => ({ cut, i })).filter((x) => !x.cut.imageUrl);
+  if (!pending.length) {
     toast('이미 모든 컷의 장면 이미지가 있습니다.');
     return;
   }
 
   ai.running = true;
-  ai.done = cuts.length - todo.length;
+  ai.providers = {};
+  ai.rounds = 0;
+  ai.total = cuts.length;
+  ai.done = cuts.length - pending.length;
   ai.failed = 0;
   ai.error = '';
   const btn = $('#genImagesBtn');
-  btn.disabled = true;
-  setToolStatus(`컷 이미지 생성 중… (${ai.done}/${cuts.length})`, ai.done / cuts.length);
+  if (btn) btn.disabled = true;
+  const remaining = () => cuts.filter((c) => !c.imageUrl).length;
+  const startedAt = Date.now();
 
-  for (let i = 0; i < cuts.length; i += 1) {
-    const cut = cuts[i];
-    if (cut.imageUrl) continue;
-    setToolStatus(`컷 ${i + 1}/${cuts.length} 장면 생성 중…`, i / cuts.length);
-    try {
-      const res = await fetch('/api/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: cut.visualPrompt, aspectRatio: '9:16', cutId: cut.id }),
-      });
-      const data = await res.json().catch(() => null);
-      if (data?.ok && data.image) {
-        cut.imageUrl = data.image;
-        ai.done += 1;
-        applyCutImage(i);
-      } else {
-        ai.failed += 1;
-        ai.error = String(data?.message || data?.error || `HTTP ${res.status}`);
-        if (data?.error === 'gemini-not-configured') {
-          state.hasGeminiKey = false;
-          updateAiBanner();
-          break;
+  setToolStatus(`무료 AI 이미지 생성 중 · ${ai.done}/${cuts.length} 완료`, ai.done / cuts.length);
+  paintImageBadge(`무료 AI 이미지 생성 중 · ${ai.done}/${cuts.length} 완료`, 'busy');
+
+  // 한 번에 다 보내고(파도), 대기열에 막힌 컷만 서버가 알려준 초만큼 쉬었다가 다시 보냅니다.
+  while (pending.length && ai.rounds < AI_MAX_ROUNDS) {
+    ai.rounds += 1;
+    const wave = pending;
+    pending = [];
+    let waitMs = 0;
+
+    await Promise.all(
+      wave.map(async ({ cut, i }) => {
+        const r = await requestCutImage(cut);
+        if (r.ok) {
+          cut.imageUrl = r.data.image;
+          cut.imageProvider = r.data.provider || 'free';
+          cut.imageModel = r.data.model || '';
+          ai.providers[cut.imageProvider] = (ai.providers[cut.imageProvider] || 0) + 1;
+          ai.done = cuts.length - remaining();
+          applyCutImage(i);
+          const done = `${ai.done}/${cuts.length} 완료`;
+          const who = providerSummary();
+          setToolStatus(`무료 AI 이미지 생성 중 · ${done}${who ? ` (${who})` : ''}`, ai.done / cuts.length);
+          paintImageBadge(`무료 AI 이미지 생성 중 · ${done}`, 'busy');
+          return;
         }
-        if (data?.error === 'rate-limited') break;
-      }
-    } catch (err) {
-      ai.failed += 1;
-      ai.error = String(err?.message || err);
+        ai.error = r.message || r.error;
+        if (r.retryable) {
+          pending.push({ cut, i });
+          waitMs = Math.max(waitMs, Number(r.retryAfterMs) || 0);
+        } else {
+          ai.failed += 1;
+        }
+      }),
+    );
+
+    if (pending.length) {
+      const waitSec = Math.max(8, Math.round(waitMs / 1000));
+      setToolStatus(`무료 이미지 대기 중 · ${waitSec}초 뒤 ${pending.length}컷 재시도 (${ai.rounds}/${AI_MAX_ROUNDS})`, ai.done / cuts.length);
+      paintImageBadge(`무료 AI 대기 중 · ${ai.done}/${cuts.length} 완료 · ${waitSec}초 뒤 재시도`, 'busy');
+      await sleep(Math.min(60_000, waitMs));
     }
   }
 
   ai.running = false;
-  btn.disabled = false;
+  if (btn) btn.disabled = false;
+
   const total = cuts.length;
-  if (ai.done >= total) {
-    setToolStatus(`장면 이미지 ${ai.done}개 생성 완료 — 플레이어에 반영했습니다.`, 1);
-    toast('컷별 AI 장면을 플레이어에 입혔습니다.');
-    setTimeout(() => setToolStatus('', 0), 5000);
-  } else {
-    setToolStatus(`이미지 ${ai.done}/${total} 생성${ai.failed ? ` · 실패 ${ai.failed}` : ''}${ai.error ? ` — ${ai.error}` : ''}`, ai.done / total);
-    if (ai.error) toast(ai.error.slice(0, 120));
+  const made = total - remaining();
+  const who = providerSummary();
+  const took = Math.round((Date.now() - startedAt) / 1000);
+
+  if (!remaining()) {
+    setToolStatus(`무료 AI 장면 ${made}개 완료 (${took}초${who ? ` · ${who}` : ''}) — 플레이어에 반영했습니다.`, 1);
+    paintImageBadge(`무료 AI 이미지 완료 · ${made}/${total} (${who || '무료 AI'})`, 'ok');
+    toast('컷별 AI 장면을 무료 생성해 플레이어에 입혔습니다.');
+    setTimeout(() => setToolStatus('', 0), 6000);
+    return;
   }
+
+  const left = remaining();
+  ai.failed = Math.max(ai.failed, left);
+  const reason = ai.error || '무료 대기열이 혼잡합니다';
+  setToolStatus(`무료 AI 장면 ${made}/${total} 완료 · ${left}컷 남음 — ${reason.slice(0, 90)}`, made / total);
+  paintImageBadge(`무료 AI · ${made}/${total} 완료 · ${left}컷은 잠시 뒤 🎨 다시 시도`, 'warn');
+  toast(`${made}/${total}컷 완료 — 남은 ${left}컷은 잠시 뒤 🎨 버튼으로 다시 시도해 주세요.`);
+  updateAiBanner();
 }
 
 /* ───────────────────── 🎬 영상 파일 내보내기 ───────────────────── */
@@ -544,7 +664,12 @@ function drawGradientScene(ctx, cut, W, H) {
 function drawKenBurnsImage(ctx, img, cut, local, idx, W, H) {
   const move = CAM_MOVES[idx % CAM_MOVES.length];
   const scale = move.s0 + (move.s1 - move.s0) * local;
-  const ratio = img.width / img.height;
+  // 무료 제공자(Pollinations) 이미지는 하단 1.2~2.4%(≈14px)에 작은 워터마크가 붙습니다(실측).
+  // 9:16 캔버스에 맞춰 자를 때 소스 하단 5%를 제외해 프레임 밖으로 보냅니다.
+  const SAFE_BOTTOM = 0.05;
+  const sw = img.width;
+  const sh = Math.max(1, Math.round(img.height * (1 - SAFE_BOTTOM)));
+  const ratio = sw / sh;
   const canvasRatio = W / H;
   let dw;
   let dh;
@@ -557,7 +682,7 @@ function drawKenBurnsImage(ctx, img, cut, local, idx, W, H) {
   }
   const dx = (W - dw) / 2 + (move.x / 100) * W * local;
   const dy = (H - dh) / 2 + (move.y / 100) * H * local;
-  ctx.drawImage(img, dx, dy, dw, dh);
+  ctx.drawImage(img, 0, 0, sw, sh, dx, dy, dw, dh);
 }
 
 function drawVideoFrame(ctx, t, images, W, H) {
@@ -1024,6 +1149,7 @@ function openPlayer() {
   section.classList.remove('hidden');
   state.playerOpen = true;
   buildPlayer();
+  refreshImageBadgeFromPkg();
   player.rate = state.pkg.tts.rate;
   $('#speedRange').value = String(player.rate);
   $('#speedVal').textContent = `${player.rate.toFixed(2)}x`;
@@ -1147,9 +1273,7 @@ function bind() {
 
   $('#genImagesBtn')?.addEventListener('click', generateCutImages);
   $('#downloadVideoBtn')?.addEventListener('click', exportVideo);
-  $('#addKeyHelp')?.addEventListener('click', () => {
-    copyText('Vercel → Projects → shorts-studio → Settings → Environment Variables → GEMINI_API_KEY 추가 후 Redeploy', '안내를 복사했습니다.');
-  });
+  paintImageBadge('무료 AI 이미지 · 준비됨', 'ok');
   loadHealth();
 
   document.addEventListener('keydown', (e) => {

@@ -38,6 +38,42 @@ function jsonRes(obj, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => obj, text: async () => JSON.stringify(obj) };
 }
 
+/** 이미지 바이트 응답 (헤더 get 포함) */
+function binaryRes(bytes, mime = 'image/jpeg', status = 200, headers = {}) {
+  const buf = Buffer.from(bytes);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get(name) {
+        const key = String(name).toLowerCase();
+        if (key in headers) return headers[key];
+        if (key === 'content-type') return mime;
+        return null;
+      },
+    },
+    arrayBuffer: async () => buf,
+    text: async () => buf.toString('utf8'),
+    json: async () => JSON.parse(buf.toString('utf8')),
+  };
+}
+
+/** 앞 3바이트가 JPEG 시그니처인 가짜 이미지 */
+function jpegBytes(size = 4000) {
+  const buf = Buffer.alloc(size, 0x41);
+  buf[0] = 0xff;
+  buf[1] = 0xd8;
+  buf[2] = 0xff;
+  return buf;
+}
+
+function webpBytes(size = 4000) {
+  const buf = Buffer.alloc(size, 0x42);
+  buf.write('RIFF', 0, 'ascii');
+  buf.write('WEBP', 8, 'ascii');
+  return buf;
+}
+
 const blueprint = analyzeReference({
   url: 'https://www.youtube.com/shorts/2QZPPEle9IY',
   topic: TOPIC,
@@ -181,16 +217,141 @@ test('analyze: 주제가 없으면 400', async () => {
   assert.equal(JSON.parse(res.body).error, 'no-topic');
 });
 
-test('generate-image: 키가 없으면 503 gemini-not-configured + 안내', async () => {
-  await withKey(null, async () => {
-    const res = mockRes();
-    await imageHandler(mockReq({ body: { prompt: 'Photoreal photograph, Korean street, 9:16', aspectRatio: '9:16' } }), res);
-    const data = JSON.parse(res.body);
-    assert.equal(res.statusCode, 503);
-    assert.equal(data.ok, false);
-    assert.equal(data.error, 'gemini-not-configured');
-    assert.ok(data.message.includes('GEMINI_API_KEY'));
-  });
+test('generate-image: 키가 없어도 무료 경로(Pollinations)로 실제 이미지를 돌려준다', async () => {
+  await withKey(null, () =>
+    withFetch(
+      async (url) => {
+        assert.match(String(url), /image\.pollinations\.ai\/prompt\//);
+        assert.match(String(url), /width=720/);
+        assert.match(String(url), /height=1280/);
+        return binaryRes(jpegBytes(), 'image/jpeg', 200, { 'x-model-used': 'sana' });
+      },
+      async () => {
+        const res = mockRes();
+        await imageHandler(mockReq({ body: { prompt: 'Photoreal photograph, Korean street, 9:16', cutId: 'cut-3' } }), res);
+        const data = JSON.parse(res.body);
+        assert.equal(res.statusCode, 200);
+        assert.equal(data.ok, true);
+        assert.equal(data.provider, 'pollinations-free');
+        assert.equal(data.free, true);
+        assert.equal(data.cutId, 'cut-3');
+        assert.ok(data.image.startsWith('data:image/jpeg;base64,'));
+        assert.ok(data.image.length > 1000);
+      },
+    ),
+  );
+});
+
+test('generate-image: Gemini 가 429(이미지 한도 0)면 무료 경로로 자동 폴백한다', async () => {
+  const seen = [];
+  await withKey(FAKE_KEY, () =>
+    withFetch(
+      async (url) => {
+        const u = String(url);
+        seen.push(u);
+        if (u.includes('generativelanguage.googleapis.com')) {
+          return jsonRes({ error: { message: 'You exceeded your current quota' } }, 429);
+        }
+        return binaryRes(jpegBytes(), 'image/jpeg', 200, { 'x-model-used': 'sana' });
+      },
+      async () => {
+        const res = mockRes();
+        await imageHandler(mockReq({ body: { prompt: 'Photoreal photograph, Korean rooftop, 9:16' } }), res);
+        const data = JSON.parse(res.body);
+        assert.equal(res.statusCode, 200);
+        assert.equal(data.ok, true);
+        assert.equal(data.provider, 'pollinations-free');
+        assert.ok(seen.some((u) => u.includes('generativelanguage.googleapis.com')));
+        assert.ok(seen.some((u) => u.includes('image.pollinations.ai')));
+        assert.ok((data.attempts || []).some((a) => a.provider === 'gemini' && a.status === 429));
+        assert.ok(!res.body.includes(FAKE_KEY));
+      },
+    ),
+  );
+});
+
+test('generate-image: Pollinations 가 402면 HF FLUX 로 넘어가 webp 를 돌려준다', async () => {
+  const seen = [];
+  await withKey(null, () =>
+    withFetch(
+      async (url, init) => {
+        const u = String(url);
+        seen.push(u);
+        if (u.includes('image.pollinations.ai')) {
+          return jsonRes({ status: 402, error: { code: 'FREE_LIMIT', message: 'Free limit reached: 1 image every 45 seconds per IP. Retry after 30s' } }, 402);
+        }
+        if (u.endsWith('/gradio_api/call/infer')) {
+          const body = JSON.parse(init.body);
+          assert.equal(body.data[3], 720);
+          assert.equal(body.data[4], 1280);
+          return jsonRes({ event_id: 'evt-1' });
+        }
+        if (u.includes('/gradio_api/call/infer/evt-1')) {
+          return { ok: true, status: 200, headers: { get: () => 'text/event-stream' }, text: async () => 'event: complete\ndata: [{"url": "https://hf.space/file/image.webp"}]\n\n', json: async () => ({}) };
+        }
+        return binaryRes(webpBytes(), 'image/webp');
+      },
+      async () => {
+        const res = mockRes();
+        await imageHandler(mockReq({ body: { prompt: 'Photoreal photograph, night market, 9:16' } }), res);
+        const data = JSON.parse(res.body);
+        assert.equal(res.statusCode, 200);
+        assert.equal(data.provider, 'hf-flux-free');
+        assert.ok(data.image.startsWith('data:image/webp;base64,'));
+        assert.ok(seen.some((u) => u.includes('image.pollinations.ai')));
+      },
+    ),
+  );
+});
+
+test('generate-image: 무료 경로도 모두 막히면 429 free-busy + 재시도 초를 정직하게 알린다', async () => {
+  await withKey(FAKE_KEY, () =>
+    withFetch(
+      async (url) => {
+        const u = String(url);
+        if (u.includes('generativelanguage.googleapis.com')) {
+          return jsonRes({ error: { message: 'quota' } }, 429);
+        }
+        if (u.includes('image.pollinations.ai')) {
+          return jsonRes({ status: 402, error: { message: 'Retry after 45s' } }, 402);
+        }
+        return { ok: true, status: 200, headers: { get: () => 'text/event-stream' }, text: async () => 'event: error\ndata: null\n\n', json: async () => ({}) };
+      },
+      async () => {
+        const res = mockRes();
+        await imageHandler(mockReq({ body: { prompt: 'Photoreal photograph, empty street, 9:16' } }), res);
+        const data = JSON.parse(res.body);
+        assert.equal(res.statusCode, 429);
+        assert.equal(data.ok, false);
+        assert.equal(data.error, 'free-busy');
+        assert.ok(data.retryAfterMs >= 8000);
+        assert.match(data.message, /초 뒤/);
+        assert.ok(Array.isArray(data.attempts) && data.attempts.length >= 2);
+      },
+    ),
+  );
+});
+
+test('generate-image: 무료 업스트림이 이미지가 아닌 JSON 을 주면 성공으로 꾸미지 않는다', async () => {
+  await withKey(null, () =>
+    withFetch(
+      async (url) => {
+        const u = String(url);
+        if (u.includes('image.pollinations.ai')) {
+          return binaryRes(Buffer.from('{"error":"nope"}'), 'application/json');
+        }
+        return { ok: true, status: 200, headers: { get: () => 'text/event-stream' }, text: async () => 'event: error\ndata: null\n\n', json: async () => ({}) };
+      },
+      async () => {
+        const res = mockRes();
+        await imageHandler(mockReq({ body: { prompt: 'Photoreal photograph, quiet alley, 9:16' } }), res);
+        const data = JSON.parse(res.body);
+        assert.equal(res.statusCode, 502);
+        assert.equal(data.error, 'image-failed');
+        assert.equal(data.ok, false);
+      },
+    ),
+  );
 });
 
 test('generate-image: 성공하면 data URL 로 돌려준다', async () => {
@@ -260,6 +421,7 @@ test('generate-image GET: 진단 정보에 키 값은 없고 유무만 있다', 
     const data = JSON.parse(res.body);
     assert.equal(data.hasGeminiKey, true);
     assert.ok(Array.isArray(data.models) && data.models.includes('gemini-2.5-flash-image'));
+    assert.deepEqual(data.freeProviders, ['pollinations-free', 'hf-flux-free']);
     assert.ok(!res.body.includes(FAKE_KEY));
   });
 });
