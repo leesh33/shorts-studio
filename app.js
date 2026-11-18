@@ -404,7 +404,8 @@ function paintImageBadge(text, tone = 'ok') {
   }
   const chip = $('#sceneProviderBadge');
   if (chip) {
-    chip.textContent = text;
+    // 플레이어 안쪽 칩은 한 줄로 — 제공자 요약(괄호)은 카드에만 남깁니다.
+    chip.textContent = text.replace(/\s*\([^)]*\)/g, '');
     chip.classList.remove('hidden');
     chip.classList.toggle('text-amber-300', tone === 'warn');
     chip.classList.toggle('text-violet-300', tone === 'busy');
