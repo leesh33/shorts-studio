@@ -91,13 +91,16 @@ export default async function handler(req, res) {
   try {
     const result = await generateSceneImage({ apiKey, prompt, aspectRatio, models: imageModels() });
     if (!result.ok) {
-      const rateLimited = result.reason === 'rate-limited';
+      const rateLimited = result.reason === 'rate-limited' || result.reason === 'quota-exhausted';
+      const quotaGone = result.reason === 'quota-exhausted';
       return send(res, rateLimited ? 429 : 502, {
         ok: false,
         error: rateLimited ? 'rate-limited' : 'image-failed',
-        message: rateLimited
-          ? 'Gemini 이미지 생성 한도에 걸렸습니다. 잠시 뒤 다시 시도해 주세요.'
-          : '이미지를 만들지 못했습니다. 프롬프트를 조금 바꿔 다시 시도해 주세요.',
+        message: quotaGone
+          ? 'Gemini 이미지 모델의 할당량이 없습니다. 이 프로젝트(무료 등급)는 이미지 모델 한도가 0이라 지금은 만들 수 없습니다 — Google AI Studio에서 결제(빌링)를 켜면 바로 동작합니다. 그때까지는 그라데이션 장면으로 미리보기합니다.'
+          : rateLimited
+            ? 'Gemini 이미지 생성 한도에 걸렸습니다. 잠시 뒤 다시 시도해 주세요.'
+            : '이미지를 만들지 못했습니다. 프롬프트를 조금 바꿔 다시 시도해 주세요.',
         attempts: (result.attempts || []).slice(0, 8).map((a) => ({ step: a.step, model: a.model, status: a.status, reason: a.reason })),
       });
     }
