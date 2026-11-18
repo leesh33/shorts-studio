@@ -471,11 +471,13 @@ function paintSubtitle(cut, animate) {
       const re = /\[([^\]]+)\]|([^\s\[]+)/g;
       let m;
       while ((m = re.exec(line)) !== null) parts.push({ text: m[1] || m[2], hl: Boolean(m[1]) });
-      const words = parts.map((part, i) => {
+      let html = '';
+      parts.forEach((part, i) => {
         const delay = animate ? ` style="animation-delay:${i * 32}ms"` : '';
-        return `<span class="chunk${part.hl ? ' hl' : ''}"${delay}>${esc(part.text)}</span>`;
+        const glue = i > 0 && !/^[,.·!?~)\]…]/.test(part.text) ? ' ' : '';
+        html += `${glue}<span class="chunk${part.hl ? ' hl' : ''}"${delay}>${esc(part.text)}</span>`;
       });
-      return `<span class="line">${words.join(' ')}</span>`;
+      return `<span class="line">${html}</span>`;
     })
     .join('');
 }
