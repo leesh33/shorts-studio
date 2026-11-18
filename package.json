@@ -1,0 +1,12 @@
+{
+  "name": "shorts-studio",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "쇼츠 클론 스튜디오 — 예시 쇼츠 URL + 주제 한 줄로 쇼츠 대본·연출·자막 패키지를 만드는 웹 앱",
+  "scripts": {
+    "test": "node --test tests/",
+    "dev": "node tools/serve.mjs"
+  },
+  "engines": { "node": ">=20" }
+}
