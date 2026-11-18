@@ -13,6 +13,7 @@ import {
   keyPhrase,
   punchify,
   chunkText,
+  detectStrategy,
 } from '../lib/engine.js';
 
 test('parseYouTubeUrl: shorts / watch / youtu.be / id', () => {
@@ -101,6 +102,14 @@ test('강조 마크업: 숫자 우선, 왕복 복원', () => {
   assert.equal(marked, '[2028년]에 판이 바뀝니다');
   assert.equal(stripMarkup(marked), '2028년에 판이 바뀝니다');
   assert.equal(markEmphasis('검단신도시 이야기', ['검단신도시']), '[검단신도시] 이야기');
+});
+
+test('detectStrategy: 주제가 레퍼런스 제목보다 우선', () => {
+  assert.equal(detectStrategy('30대 직장인 앱테크 루틴', 'auto', '제주도 맛집 횟집 리뷰'), 'howto');
+  assert.equal(detectStrategy('우리 동네 숨은 국밥집', 'auto', ''), 'review');
+  assert.equal(detectStrategy('검단신도시 2028년 교통 호재', 'auto', '맛집'), 'info');
+  assert.equal(detectStrategy('아무 주제', 'story'), 'story');
+  assert.equal(detectStrategy('ㅁㄴㅇㄹ', 'auto', ''), 'general');
 });
 
 test('주제 해석 도우미', () => {
