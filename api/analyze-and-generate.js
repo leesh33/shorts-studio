@@ -101,7 +101,11 @@ export function extractPlayerDetails(html) {
         try {
           const parsed = JSON.parse(html.slice(braceAt, i + 1));
           const vd = parsed?.videoDetails || {};
+          const tracks = parsed?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+          const koTrack = tracks.find((t) => String(t.languageCode || '').toLowerCase().startsWith('ko')) || tracks[0];
           return {
+            captionUrl: koTrack ? String(koTrack.baseUrl || '') : '',
+            captionLang: koTrack ? String(koTrack.languageCode || '') : '',
             title: String(vd.title || ''),
             durationSec: Number(vd.lengthSeconds) || 0,
             description: String(vd.shortDescription || ''),
@@ -119,14 +123,49 @@ export function extractPlayerDetails(html) {
   return null;
 }
 
+/** 유튜브 자동 자막(json3)을 시도합니다. 실패하면 조용히 포기합니다. */
+async function fetchCaptions(captionUrl) {
+  if (!captionUrl) return { ok: false, reason: 'no-caption-track' };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const res = await fetch(`${captionUrl}&fmt=json3`, {
+      headers: { 'User-Agent': UA, 'Accept-Language': 'ko-KR,ko;q=0.9' },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return { ok: false, reason: `http-${res.status}` };
+    const raw = await res.text();
+    if (raw.trim().length < 20) return { ok: false, reason: 'empty' };
+    let text = '';
+    try {
+      const data = JSON.parse(raw);
+      text = (data.events || [])
+        .map((e) => (e.segs || []).map((sg) => sg.utf8 || '').join(''))
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    } catch {
+      text = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+    if (text.length < 40) return { ok: false, reason: 'too-short' };
+    return { ok: true, text: text.slice(0, 4000) };
+  } catch (err) {
+    return { ok: false, reason: String(err?.name || err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchReference(videoId, canonical) {
   const attempts = [];
   let meta = { title: '', channel: '', description: '', durationSec: 0, tags: [], thumbnail: '', fetchedBy: 'none' };
 
+  let captionUrl = '';
   const page = await getText(`https://www.youtube.com/shorts/${videoId}`);
   if (page.ok) {
     const details = extractPlayerDetails(page.text);
     if (details && details.title) {
+      captionUrl = details.captionUrl || '';
       meta = {
         title: details.title,
         channel: details.channel,
@@ -189,7 +228,18 @@ async function fetchReference(videoId, canonical) {
     attempts.push({ step: 'youtube-data-api', ok: false, reason: 'no-key' });
   }
 
-  return { meta, attempts };
+  let transcript = '';
+  if (captionUrl) {
+    const cap = await fetchCaptions(captionUrl);
+    if (cap.ok) {
+      transcript = cap.text;
+      attempts.push({ step: 'captions', ok: true, chars: cap.text.length });
+    } else {
+      attempts.push({ step: 'captions', ok: false, reason: cap.reason });
+    }
+  }
+
+  return { meta, attempts, transcript };
 }
 
 export default async function handler(req, res) {
@@ -224,7 +274,9 @@ export default async function handler(req, res) {
   let analysis = { source: 'client-cache', attempts: [{ step: 'client-cache', ok: true }] };
 
   if (!blueprint || !blueprint.source) {
-    const { meta, attempts } = await fetchReference(parsed.videoId, parsed.canonical);
+    const { meta, attempts, transcript } = await fetchReference(parsed.videoId, parsed.canonical);
+    const userText = String(body.referenceText || '').slice(0, 4000);
+    const scriptText = userText || transcript || '';
     blueprint = analyzeReference({
       url: parsed.canonical,
       topic,
@@ -234,10 +286,11 @@ export default async function handler(req, res) {
       durationSec: meta.durationSec,
       tags: meta.tags,
       thumbnail: meta.thumbnail,
-      referenceText: String(body.referenceText || '').slice(0, 4000),
+      referenceText: scriptText,
+      transcriptAuto: Boolean(!userText && transcript),
       fetchedBy: meta.fetchedBy,
     });
-    analysis = { source: meta.fetchedBy, attempts };
+    analysis = { source: meta.fetchedBy, attempts, transcriptChars: scriptText.length, transcriptAuto: Boolean(!userText && transcript) };
   }
 
   // ② 새 쇼츠 패키지

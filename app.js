@@ -255,7 +255,12 @@ function renderBlueprint() {
     ['훅 유형', bp.hook?.label || '—'],
     ['컷 구성', `${bp.cuts?.count || 7}컷 · 컷당 ${bp.cuts?.avgSec || 5}초`],
     ['템포', `${bp.pacing?.tempo || 1.21}x · 무음 없음`],
-    ['문장 리듬', bp.rhythm?.measured ? `분당 ${bp.rhythm.wpm}어절 · ${bp.rhythm.avgSentenceChars}자` : '표준값 사용'],
+    [
+      '문장 리듬',
+      bp.rhythm?.measured
+        ? `분당 ${bp.rhythm.wpm}어절 · ${bp.rhythm.avgSentenceChars}자${bp.source?.transcriptSource === 'auto' ? ' (자동 자막)' : ''}`
+        : '표준값 사용',
+    ],
     ['자막', bp.subtitle?.style || '2줄 굵게'],
     ['비주얼', bp.visual?.mood || '—'],
     ['채널', bp.source?.channel || '—'],
