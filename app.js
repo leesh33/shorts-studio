@@ -30,6 +30,7 @@ const player = {
   mute: false,
   rate: 1.21,
   idx: -1,
+  beatIdx: -1,
   voice: null,
 };
 
@@ -134,6 +135,9 @@ async function generate(event) {
     if (!res.ok || !data || !data.ok) throw new Error((data && data.message) || `요청 실패 (HTTP ${res.status})`);
 
     state.pkg = data.package;
+    state.pkg.cuts.forEach((cut) => {
+      cut.beats = buildBeats(cut);
+    });
     state.blueprint = data.analysis?.blueprint || data.package.reference;
     finishProgress();
     renderResult(data.analysis);
@@ -239,6 +243,37 @@ function escapeHtml(value) {
 
 /* ───────────────────────── 9:16 플레이어 ───────────────────────── */
 
+/** 한 컷의 자막을 화면에 순차로 띄울 '비트'로 나눕니다 (숏츠 자막 호흡). */
+function buildBeats(cut) {
+  const text = String(cut.subtitle || '').trim();
+  const sentences = text.split(/(?<=[.!?…])\s+/).filter(Boolean);
+  const pieces = [];
+  for (const sentence of sentences) {
+    const words = sentence.split(' ');
+    let line = '';
+    for (const w of words) {
+      const plainLen = stripMarkup(`${line} ${w}`).length;
+      if (line && plainLen > 20) {
+        pieces.push(line);
+        line = w;
+      } else {
+        line = line ? `${line} ${w}` : w;
+      }
+    }
+    if (line) pieces.push(line);
+  }
+  const totalChars = pieces.reduce((n, p) => n + stripMarkup(p).length, 0) || 1;
+  const span = Math.max(0.6, cut.end - cut.start);
+  let cursor = cut.start;
+  return pieces.map((textPiece, i) => {
+    const share = stripMarkup(textPiece).length / totalChars;
+    const start = Number(cursor.toFixed(2));
+    const end = i === pieces.length - 1 ? cut.end : Number((cursor + span * share).toFixed(2));
+    cursor = end;
+    return { start, end, text: textPiece };
+  });
+}
+
 const CAM_MOVES = [
   { s0: 1.02, s1: 1.1, x: 0, y: -1.2 },
   { s0: 1.1, s1: 1.02, x: 0, y: 1.2 },
@@ -274,6 +309,7 @@ function buildPlayer() {
   player.total = pkg.cuts[pkg.cuts.length - 1].end;
   player.t = 0;
   player.idx = -1;
+  player.beatIdx = -1;
   renderCues();
   updateFrame(true);
 }
@@ -296,6 +332,12 @@ function renderCues() {
   });
 }
 
+function beatAt(cut) {
+  const beats = cut.beats || [];
+  for (let i = 0; i < beats.length; i += 1) if (player.t < beats[i].end - 0.0001) return { index: i, text: beats[i].text };
+  return beats.length ? { index: beats.length - 1, text: beats[beats.length - 1].text } : null;
+}
+
 function cutIndexAt(t) {
   const cuts = state.pkg.cuts;
   for (let i = 0; i < cuts.length; i += 1) if (t < cuts[i].end - 0.0001) return i;
@@ -309,6 +351,11 @@ function updateFrame(force = false) {
   if (idx !== player.idx || force) {
     player.idx = idx;
     onCutEnter(idx);
+  }
+  const beat = beatAt(pkg.cuts[idx]);
+  if (beat && beat.index !== player.beatIdx) {
+    player.beatIdx = beat.index;
+    paintSubtitle(beat.text, true);
   }
   const cut = pkg.cuts[idx];
   const local = Math.min(1, Math.max(0, (player.t - cut.start) / Math.max(0.001, cut.end - cut.start)));
@@ -331,14 +378,14 @@ function onCutEnter(idx) {
   $('#cutCounter').textContent = `${idx + 1} / ${state.pkg.cuts.length}`;
   $('#hookBadge').classList.toggle('hidden', idx !== 0);
   $('#bigWord').textContent = cut.bigWord || '';
-  paintSubtitle(cut, true);
+  player.beatIdx = -1;
   [...$('#sceneStack').children].forEach((s, i) => s.classList.toggle('is-active', i === idx));
   if (player.playing && !player.mute) speak(cut);
 }
 
-function paintSubtitle(cut, animate) {
+function paintSubtitle(text, animate) {
   const el = $('#subtitle');
-  const lines = wrapLines(cut.subtitle || '', 16).slice(0, 3);
+  const lines = wrapLines(text || '', 15).slice(0, 3);
   el.innerHTML = lines
     .map((line) => {
       const parts = [];
@@ -442,6 +489,7 @@ function seekToCut(i, autoplay = false) {
   const cut = state.pkg.cuts[i];
   player.t = cut.start;
   player.idx = -1;
+  player.beatIdx = -1;
   updateFrame(true);
   if (autoplay) {
     if (player.playing) {
