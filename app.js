@@ -1270,6 +1270,23 @@ function buildBeats(cut) {
   const text = String(cut.subtitle || '').trim();
   const sentences = text.split(/(?<=[.!?…])\s+/).filter(Boolean);
   const pieces = [];
+  // [강조] 대괄호 안에서 끊으면 다음 비트에 "노선]" 처럼 닫는 괄호만 남습니다. 바깥 위치로 물러섭니다.
+  const outsideEmphasis = (source, at) => {
+    let depth = 0;
+    for (let i = 0; i < at; i += 1) {
+      if (source[i] === '[') depth += 1;
+      else if (source[i] === ']') depth = Math.max(0, depth - 1);
+    }
+    let pos = at;
+    while (pos > 0 && depth > 0) {
+      pos -= 1;
+      if (source[pos] === '[') depth -= 1;
+      else if (source[pos] === ']') depth += 1;
+    }
+    // 대괄호를 가로지른 자리면 그 앞 공백까지 물러섭니다.
+    while (pos > 6 && source[pos] !== ' ') pos -= 1;
+    return pos;
+  };
   for (const sentence of sentences) {
     const plain = stripMarkup(sentence);
     if (plain.length <= 26) {
@@ -1277,15 +1294,15 @@ function buildBeats(cut) {
       continue;
     }
     // 긴 문장만 쉼표 → 어절 순서로 끊습니다 (말이 중간에서 끊기지 않게).
-    const commaAt = Math.max(sentence.lastIndexOf(', ', 26), sentence.lastIndexOf(' ', 24));
+    const commaAt = outsideEmphasis(sentence, Math.max(sentence.lastIndexOf(', ', 26), sentence.lastIndexOf(' ', 24)));
     if (commaAt > 8 && commaAt < sentence.length - 2) {
       pieces.push(sentence.slice(0, commaAt + 1).trim());
       pieces.push(sentence.slice(commaAt + 1).trim());
     } else {
-      const cut = sentence.lastIndexOf(' ', 24);
-      if (cut > 8) {
-        pieces.push(sentence.slice(0, cut).trim());
-        pieces.push(sentence.slice(cut + 1).trim());
+      const cutAt = outsideEmphasis(sentence, sentence.lastIndexOf(' ', 24));
+      if (cutAt > 8) {
+        pieces.push(sentence.slice(0, cutAt).trim());
+        pieces.push(sentence.slice(cutAt + 1).trim());
       } else {
         pieces.push(sentence);
       }
@@ -1417,23 +1434,16 @@ function onCutEnter(idx) {
 
 function paintSubtitle(text, animate) {
   const el = $('#subtitle');
-  const lines = wrapLines(text || '', 15).slice(0, 3);
+  // 줄바꿈보다 먼저 [강조] 를 토큰으로 묶습니다 — 그래야 대괄호가 줄 사이에서 쪼개지지 않습니다.
+  const lines = wrapTokens(tokenizeCaption(text), 15).slice(0, 3);
   el.innerHTML = lines
     .map((line) => {
-      const parts = [];
-      const re = /\[([^\]]+)\]|([^\s\[]+)/g;
-      let m;
-      let lastEnd = 0;
-      while ((m = re.exec(line)) !== null) {
-        const gap = line.slice(lastEnd, m.index);
-        parts.push({ text: m[1] || m[2], hl: Boolean(m[1]), space: parts.length > 0 && gap.includes(' ') });
-        lastEnd = re.lastIndex;
-      }
-      let html = '';
-      parts.forEach((part) => {
-        const glue = part.space ? ' ' : '';
-        html += `${glue}<span class="${part.hl ? 'text-violet-300' : ''}">${escapeHtml(part.text)}</span>`;
-      });
+      const html = line
+        .map((part) => {
+          if (part.space) return ' ';
+          return `<span class="${part.hl ? 'text-violet-300' : ''}">${escapeHtml(part.text)}</span>`;
+        })
+        .join('');
       return `<span class="block">${html}</span>`;
     })
     .join('');
@@ -1445,22 +1455,48 @@ function paintSubtitle(text, animate) {
   }
 }
 
-function wrapLines(text, maxChars) {
-  const tokens = String(text || '').split(' ').filter(Boolean);
-  const lines = [];
-  let line = '';
-  for (const tk of tokens) {
-    const plain = stripMarkup(tk);
-    if (line && [...stripMarkup(line)].length + plain.length > maxChars) {
-      lines.push(line);
-      line = tk;
-    } else {
-      line = line ? `${line} ${tk}` : tk;
+/** `[강조 구절]`(여러 단어 가능)과 낱말을 같은 토큰 목록으로 만듭니다. */
+function tokenizeCaption(text) {
+  const src = String(text || '');
+  const tokens = [];
+  const re = /\[([^\]]*)\]|([^\s\[]+)/g;
+  let m;
+  let lastEnd = 0;
+  while ((m = re.exec(src)) !== null) {
+    if (lastEnd === 0 && m.index > 0) {
+      /* 앞쪽 공백은 무시 */
+    } else if (m.index > lastEnd && /\s/.test(src.slice(lastEnd, m.index))) {
+      tokens.push({ space: true });
     }
+    tokens.push({ text: m[1] != null ? m[1] : m[2], hl: m[1] != null });
+    lastEnd = re.lastIndex;
   }
-  if (line) lines.push(line);
-  return lines;
+  return tokens;
 }
+
+function wrapTokens(tokens, maxChars) {
+  const lines = [[]];
+  let len = 0;
+  tokens.forEach((tk) => {
+    if (tk.space) {
+      const line = lines[lines.length - 1];
+      if (line.length) {
+        line.push(tk);
+        len += 1;
+      }
+      return;
+    }
+    const width = [...tk.text].length;
+    if (len && len + width > maxChars) {
+      lines.push([]);
+      len = 0;
+    }
+    lines[lines.length - 1].push(tk);
+    len += width;
+  });
+  return lines.filter((line) => line.some((tk) => !tk.space));
+}
+
 
 function speak(cut) {
   if (!('speechSynthesis' in window)) return;
