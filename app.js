@@ -788,7 +788,7 @@ function retimeToNarration() {
   player.t = Math.min(player.t, cursor);
   if (state.pkg?.meta) state.pkg.meta.totalSec = Number(cursor.toFixed(1));
   const meta = $('#scriptMeta');
-  if (meta) meta.textContent = `총 ${Math.round(cursor)}초 · 컷당 ${(cursor / cuts.length).toFixed(1)}초 · 내레이션에 맞춘 길이`;
+  if (meta) meta.textContent = `총 ${Math.round(cursor)}초 · 컷당 ${(cursor / cuts.length).toFixed(1)}초 · ${styleLabel()} · 내레이션에 맞춘 길이`;
   return true;
 }
 
