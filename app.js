@@ -841,12 +841,24 @@ function paintStyleToggle() {
 
 /* ───────────────────── 🎬 영상 파일 내보내기 ───────────────────── */
 
-function recorderMime() {
+function recorderMime(withAudio = false) {
   if (typeof window.MediaRecorder === 'undefined') return '';
   // H.264 MP4 가 최상(아이폰·퀵타임 호환)이지만, 크롬은 `video/mp4` 만 물어보면
   //  VP9 를 MP4 에 담아 버립니다(아이폰에서 안 열림). 그래서 **코덱까지 지정한 것만** 먼저 믿고,
   //  안 되면 WebM, 마지막에야 iOS 사파리용 `video/mp4` 를 씁니다.
+  //  내레이션을 넣을 때는 오디오 코덱까지 같이 지정합니다 — 크롬은 AAC(mp4a)를 지원하지 않아
+  //  avc1+opus MP4 로 가고, 사파리는 mp4a(AAC) 를 지원합니다.
+  const withSound = withAudio
+    ? [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=avc1,mp4a.40.2',
+        'video/mp4;codecs=avc1.42E01E,opus',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+      ]
+    : [];
   const candidates = [
+    ...withSound,
     'video/mp4;codecs=avc1.42E01E',
     'video/mp4;codecs=avc1',
     'video/webm;codecs=vp9',
@@ -987,7 +999,7 @@ function drawGradientScene(ctx, cut, W, H) {
 }
 
 function drawKenBurnsImage(ctx, img, cut, local, idx, W, H) {
-  const move = CAM_MOVES[idx % CAM_MOVES.length];
+  const move = camMove(idx);
   const scale = move.s0 + (move.s1 - move.s0) * local;
   // 무료 제공자(Pollinations) 이미지는 하단 1.2~2.4%(≈14px)에 작은 워터마크가 붙습니다(실측).
   // 9:16 캔버스에 맞춰 자를 때 소스 하단 5%를 제외해 프레임 밖으로 보냅니다.
@@ -1240,10 +1252,12 @@ async function exportVideo() {
     const codecNote = kind.codec === 'h264' ? 'H.264 MP4' : kind.codec === 'vp9' || kind.codec === 'vp8' ? `${kind.codec.toUpperCase()} WebM` : kind.container.toUpperCase();
     const warn = kind.container === 'mp4' && kind.codec === 'vp9' ? ' · 일부 아이폰 플레이어에서 안 열릴 수 있습니다' : '';
     const audioNote = kind.audio !== 'none' ? ` · ${audioLabel(kind.audio)} 내레이션 포함` : ' · 음성 트랙 없음';
+    const opusWarn =
+      kind.container === 'mp4' && kind.audio === 'opus' ? ' · 아이폰 사진 앱에서 소리가 빠질 수 있습니다(유튜브·인스타 업로드/PC 재생은 정상)' : '';
     setToolStatus(`${name} · ${(blob.size / 1024 / 1024).toFixed(1)}MB · ${codecNote}${warn}${audioNote}`, 1);
     toast(
       kind.audio !== 'none'
-        ? `영상 파일(${codecNote})을 내려받았습니다. 중후한 남성 내레이션이 함께 담겼습니다.`
+        ? `영상 파일(${codecNote})을 내려받았습니다. 중후한 남성 내레이션이 함께 담겼습니다.${opusWarn ? ' 아이폰 사진 앱에서는 소리가 빠질 수 있습니다.' : ''}`
         : `영상 파일(${codecNote})을 내려받았습니다. 음성은 포함되지 않았습니다.`,
     );
     setTimeout(() => setToolStatus('', 0), 8000);
@@ -1327,6 +1341,20 @@ const CAM_MOVES = [
   { s0: 1.12, s1: 1.04, x: 1.6, y: 0 },
 ];
 
+/** 3D 다이오라마용 켄번즈 — 조금 더 큰 푸시·팬으로 미니어처를 들여다보는 느낌을 냅니다. */
+const CAM_MOVES_3D = [
+  { s0: 1.04, s1: 1.16, x: -1.4, y: -1.8 },
+  { s0: 1.14, s1: 1.03, x: 1.4, y: 1.6 },
+  { s0: 1.06, s1: 1.18, x: -2.0, y: 0.4 },
+  { s0: 1.18, s1: 1.05, x: 2.0, y: -0.4 },
+];
+
+/** 비주얼 스타일에 맞는 카메라 무빙 */
+function camMove(idx) {
+  const set = state.visualStyle === '3d' ? CAM_MOVES_3D : CAM_MOVES;
+  return set[idx % set.length];
+}
+
 function buildPlayer() {
   const pkg = state.pkg;
   if (!pkg) return;
@@ -1405,7 +1433,7 @@ function updateFrame(force = false) {
   }
   const cut = pkg.cuts[idx];
   const local = Math.min(1, Math.max(0, (player.t - cut.start) / Math.max(0.001, cut.end - cut.start)));
-  const move = CAM_MOVES[idx % CAM_MOVES.length];
+  const move = camMove(idx);
   const scene = $('#sceneStack').children[idx];
   if (scene) {
     const scale = move.s0 + (move.s1 - move.s0) * local;
