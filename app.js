@@ -602,11 +602,11 @@ function setGain(on) {
   }
 }
 
-/** 서버 TTS 한 컷 — { status:'ok', buffer } 또는 { status:'fail', error } */
-async function fetchNarration(cut) {
+/** 서버 TTS 한 컷 — { status:'ok', buffer } 또는 { status:'fail', error }. force 면 실패 캐시도 다시 시도합니다. */
+async function fetchNarration(cut, { force = false } = {}) {
   const key = narrationKey(cut);
   const existing = narration.cache.get(key);
-  if (existing && existing.status !== 'loading') return existing;
+  if (existing && existing.status !== 'loading' && !(force && existing.status === 'fail')) return existing;
   const ctx = ensureAudioContext();
   const text = speechText(cut);
   if (!ctx || !text) {
@@ -694,6 +694,15 @@ async function prepareNarration() {
     }
   };
   await Promise.all([worker(), worker(), worker()]);
+
+  // 실패한 컷은 한 번만 더 시도합니다(업스트림이 순간적으로 거절했을 때).
+  const failed = state.pkg.cuts.filter((cut) => narrationEntry(cut)?.status === 'fail');
+  if (failed.length) {
+    paintNarrationNote(`음성 재시도 중 · ${failed.length}컷`, 'busy');
+    await sleep(700);
+    await Promise.all(failed.slice(0, 4).map((cut) => fetchNarration(cut, { force: true })));
+  }
+
   const result = narrationCount();
   if (result.ready === 0) {
     paintNarrationNote('음성 서버에 연결하지 못했습니다 — 브라우저 음성으로 대신 읽습니다(영상에는 음성 없음).', 'warn');
