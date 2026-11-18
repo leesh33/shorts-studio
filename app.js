@@ -22,6 +22,31 @@ const state = {
   mode: 'template',
   gemini: null,
   hasGeminiKey: null,
+  /** 비주얼 스타일 — 대본·이미지 프롬프트에 같은 값을 씁니다. */
+  visualStyle: '3d',
+};
+
+/** 화면 토글과 요청 본문이 같은 이름을 쓰도록 한 곳에 모읍니다(서버 lib/visual-style.js 와 짝). */
+const VISUAL_STYLES = {
+  '3d': { label: '3D 입체 렌더링', emoji: '🎨' },
+  cinematic: { label: '실사 시네마틱', emoji: '🎥' },
+};
+
+/** 내레이션 음성 — 'browser' 는 서버 TTS 없이 Web Speech 로 읽습니다. */
+const NARRATION_VOICES = {
+  deep: { label: '중후한 남성', pill: '중후한 남성 · 기본' },
+  docu: { label: '차분한 다큐 톤', pill: '차분한 다큐 톤' },
+  browser: { label: '브라우저 음성', pill: '브라우저 음성' },
+};
+
+/** 서버 TTS(/api/tts) 음성 캐시 + Web Audio 재생기 상태 */
+const narration = {
+  voice: 'deep',
+  ctx: null,
+  gain: null,
+  cache: new Map(),
+  sources: [],
+  failed: 0,
 };
 
 /* AI 이미지 생성 상태 — 한 컷씩 순서대로 만듭니다(한도·시간 보호) */
@@ -139,7 +164,7 @@ async function generate(event) {
     const res = await fetch('/api/analyze-and-generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: parsed.canonical, topic, tone: 'auto', length: 36 }),
+      body: JSON.stringify({ url: parsed.canonical, topic, tone: 'auto', length: 36, style: state.visualStyle }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data || !data.ok) throw new Error((data && data.message) || `요청 실패 (HTTP ${res.status})`);
@@ -180,7 +205,7 @@ function renderResult(analysis) {
   paintModeBadge();
   $('#resultSub').textContent = `${pkg.meta.strategyLabel} · ${pkg.cuts.length}컷 · 약 ${Math.round(pkg.meta.totalSec)}초`;
   $('#scriptTopic').textContent = pkg.meta.topic;
-  $('#scriptMeta').textContent = `총 ${Math.round(pkg.meta.totalSec)}초 · 컷당 ${(pkg.meta.totalSec / pkg.cuts.length).toFixed(1)}초 · 템포 ${pkg.tts.rate}x`;
+  $('#scriptMeta').textContent = `총 ${Math.round(pkg.meta.totalSec)}초 · 컷당 ${(pkg.meta.totalSec / pkg.cuts.length).toFixed(1)}초 · 템포 ${pkg.tts.rate}x · ${styleLabel()}`;
 
   /* Viral DNA */
   const hook = bp.hook || {};
@@ -249,11 +274,15 @@ function renderResult(analysis) {
   });
 }
 
-function highlight(text) {
-  // [강조] 표기를 보라색 굵게
+function highlight(text) {  // [강조] 표기를 보라색 굵게
   return escapeHtml(text)
     .replace(/\[([^\]]+)\]/g, '<span class="text-violet-300 font-bold">$1</span>')
     .replace(/\n/g, '<br />');
+}
+
+function styleLabel() {
+  const style = VISUAL_STYLES[state.visualStyle] || VISUAL_STYLES['3d'];
+  return `${style.emoji} ${style.label}`;
 }
 
 function escapeHtml(value) {
@@ -418,7 +447,7 @@ async function requestCutImage(cut) {
     const res = await fetch('/api/generate-image', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: cut.visualPrompt, aspectRatio: '9:16', cutId: cut.id }),
+      body: JSON.stringify({ prompt: cut.visualPrompt, aspectRatio: '9:16', cutId: cut.id, style: state.visualStyle }),
     });
     const data = await res.json().catch(() => null);
     if (data?.ok && data.image) return { ok: true, data };
@@ -529,6 +558,287 @@ async function generateCutImages() {
   updateAiBanner();
 }
 
+/* ───────────────────── 🎙 내레이션 (중후한 남성 TTS) ───────────────────── */
+
+function speechText(cut) {
+  return stripMarkup(cut?.subtitle || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function narrationKey(cut) {
+  return `${narration.voice}|${speechText(cut)}`;
+}
+
+function narrationEntry(cut) {
+  return narration.cache.get(narrationKey(cut)) || null;
+}
+
+function narrationBuffer(cut) {
+  const entry = narrationEntry(cut);
+  return entry && entry.status === 'ok' ? entry.buffer : null;
+}
+
+/** 오디오 그래프(재생·녹화 공용) — 사용자 제스처 안에서 처음 만들고 계속 재사용합니다. */
+function ensureAudioContext() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  if (!narration.ctx) {
+    narration.ctx = new AC();
+    narration.gain = narration.ctx.createGain();
+    narration.gain.gain.value = player.mute ? 0 : 1;
+    narration.gain.connect(narration.ctx.destination);
+  }
+  if (narration.ctx.state === 'suspended') narration.ctx.resume().catch(() => {});
+  return narration.ctx;
+}
+
+function setGain(on) {
+  if (!narration.gain || !narration.ctx) return;
+  try {
+    narration.gain.gain.setTargetAtTime(on ? 1 : 0, narration.ctx.currentTime, 0.01);
+  } catch {
+    narration.gain.gain.value = on ? 1 : 0;
+  }
+}
+
+/** 서버 TTS 한 컷 — { status:'ok', buffer } 또는 { status:'fail', error } */
+async function fetchNarration(cut) {
+  const key = narrationKey(cut);
+  const existing = narration.cache.get(key);
+  if (existing && existing.status !== 'loading') return existing;
+  const ctx = ensureAudioContext();
+  const text = speechText(cut);
+  if (!ctx || !text) {
+    const fail = { status: 'fail', error: 'no-audio-context' };
+    narration.cache.set(key, fail);
+    return fail;
+  }
+  narration.cache.set(key, { status: 'loading' });
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: narration.voice }),
+    });
+    if (!res.ok) {
+      const info = await res.json().catch(() => null);
+      throw new Error(info?.message || `음성 요청 실패 (HTTP ${res.status})`);
+    }
+    const bytes = await res.arrayBuffer();
+    if (!bytes.byteLength) throw new Error('빈 음성');
+    const buffer = await ctx.decodeAudioData(bytes);
+    const entry = { status: 'ok', buffer, ms: Number(res.headers.get('X-TTS-Ms')) || 0 };
+    narration.cache.set(key, entry);
+    return entry;
+  } catch (err) {
+    narration.failed += 1;
+    const entry = { status: 'fail', error: String(err?.message || err) };
+    narration.cache.set(key, entry);
+    return entry;
+  }
+}
+
+function narrationCount() {
+  if (!state.pkg) return { ready: 0, total: 0 };
+  const cuts = state.pkg.cuts;
+  return { ready: cuts.filter((c) => narrationBuffer(c)).length, total: cuts.length };
+}
+
+function paintNarrationNote(text, tone = 'ok') {
+  const el = $('#voiceNote');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `mt-2 text-[11px] text-center ${
+    tone === 'warn' ? 'text-amber-300' : tone === 'busy' ? 'text-violet-300' : 'text-slate-500'
+  }`;
+}
+
+function defaultNarrationNote() {
+  if (narration.voice === 'browser') {
+    paintNarrationNote('브라우저 음성(Web Speech)으로 읽습니다. 영상 파일에는 음성이 들어가지 않습니다.');
+    return;
+  }
+  const who = NARRATION_VOICES[narration.voice]?.label || '중후한 남성';
+  if (!state.pkg) {
+    paintNarrationNote(`${who} 내레이션으로 읽습니다 · 대본을 만들면 음성을 준비합니다.`);
+    return;
+  }
+  const { ready, total } = narrationCount();
+  if (ready === total && total) paintNarrationNote(`${who} 내레이션 ${ready}/${total} 준비 · 그대로 영상에 담깁니다.`);
+  else paintNarrationNote(`${who} 내레이션 준비 중 · ${ready}/${total}`, 'busy');
+}
+
+/** 모든 컷의 음성을 미리 받아 둘니다(동시 3개 — 서버 부담과 대기 시간의 절충). */
+async function prepareNarration() {
+  const { total } = narrationCount();
+  if (!state.pkg || !total || narration.voice === 'browser') return { ready: 0, total };
+  const ctx = ensureAudioContext();
+  if (!ctx) {
+    paintNarrationNote('이 브라우저는 Web Audio 를 지원하지 않아 브라우저 음성으로 읽습니다.', 'warn');
+    return { ready: 0, total };
+  }
+  const queue = state.pkg.cuts.filter((cut) => {
+    const entry = narrationEntry(cut);
+    return !entry || entry.status === 'loading';
+  });
+  const cuts = state.pkg.cuts;
+  paintNarrationNote(`${NARRATION_VOICES[narration.voice]?.label || '내레이션'} 준비 중 · 0/${total}`, 'busy');
+  const worker = async () => {
+    while (queue.length) {
+      const cut = queue.shift();
+      if (!cut) return;
+      await fetchNarration(cut);
+      const ready = cuts.filter((c) => narrationBuffer(c)).length;
+      paintNarrationNote(`${NARRATION_VOICES[narration.voice]?.label || '내레이션'} 준비 중 · ${ready}/${total}`, 'busy');
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  const result = narrationCount();
+  if (result.ready === 0) {
+    paintNarrationNote('음성 서버에 연결하지 못했습니다 — 브라우저 음성으로 대신 읽습니다(영상에는 음성 없음).', 'warn');
+  } else if (result.ready < result.total) {
+    paintNarrationNote(`${NARRATION_VOICES[narration.voice]?.label} ${result.ready}/${result.total} 준비 · 나머지 컷은 브라우저 음성으로 읽습니다.`, 'warn');
+  } else {
+    paintNarrationNote(`${NARRATION_VOICES[narration.voice]?.label} 내레이션 ${result.ready}/${result.total} 준비 · 그대로 영상에 담깁니다.`);
+  }
+  return result;
+}
+
+/** 컷 길이에 맞춘 재생 배속 — 음성이 컷 밖으로 넘치지 않게 합니다. */
+function fitRate(cut, buffer) {
+  const span = Math.max(0.6, cut.end - cut.start);
+  return Math.min(1.8, Math.max(0.9, buffer.duration / span));
+}
+
+function stopNarration() {
+  narration.sources.forEach((src) => {
+    try {
+      src.stop();
+    } catch {
+      /* 이미 끝났습니다 */
+    }
+  });
+  narration.sources = [];
+}
+
+/** 현재 컷의 음성을 offset(초)부터 재생합니다. 음성이 없으면 false → 호출쪽이 Web Speech 로 폴백. */
+function playNarration(idx, offsetSec = 0) {
+  const cut = state.pkg?.cuts?.[idx];
+  if (!cut || narration.voice === 'browser' || player.mute) return false;
+  const ctx = ensureAudioContext();
+  const buffer = narrationBuffer(cut);
+  if (!ctx || !buffer) return false;
+  stopNarration();
+  const speed = Math.min(1.3, Math.max(0.75, player.rate / 1.21));
+  const rate = Math.min(2, Math.max(0.6, fitRate(cut, buffer) * speed));
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.playbackRate.value = rate;
+  src.connect(narration.gain);
+  const offset = Math.min(Math.max(0, buffer.duration - 0.03), Math.max(0, offsetSec * rate));
+  try {
+    src.start(0, offset);
+  } catch {
+    return false;
+  }
+  narration.sources.push(src);
+  src.onended = () => {
+    narration.sources = narration.sources.filter((s) => s !== src);
+  };
+  return true;
+}
+
+/**
+ * 내레이션 길이에 맞춰 컷 타임라인을 다시 잡습니다.
+ *   · 36초 대본에 6~10초짜리 음성을 그대로 욱여넣으면 말이 잘립니다.
+ *   · 절반 이상 컷에 음성이 준비되면, 컷 길이를 max(대본 길이, 음성+0.3초)로 늘려
+ *     내레이션이 끝까지 들리는 영상으로 만듭니다(최대 14초/컷).
+ */
+function retimeToNarration() {
+  const cuts = state.pkg?.cuts || [];
+  if (!cuts.length) return false;
+  const withAudio = cuts.filter((c) => narrationBuffer(c)).length;
+  if (withAudio < Math.ceil(cuts.length * 0.5)) return false;
+
+  let cursor = 0;
+  let changed = false;
+  cuts.forEach((cut) => {
+    const scriptDur = Math.max(1.2, cut.end - cut.start);
+    const buffer = narrationBuffer(cut);
+    const target = buffer ? Math.min(14, Math.max(scriptDur, buffer.duration + 0.3)) : scriptDur;
+    if (Math.abs(target - scriptDur) > 0.05) changed = true;
+    cut.start = Number(cursor.toFixed(2));
+    cut.end = Number((cursor + target).toFixed(2));
+    cursor = cut.end;
+    cut.beats = buildBeats(cut);
+  });
+
+  if (!changed) return false;
+  player.total = cursor;
+  player.t = Math.min(player.t, cursor);
+  if (state.pkg?.meta) state.pkg.meta.totalSec = Number(cursor.toFixed(1));
+  const meta = $('#scriptMeta');
+  if (meta) meta.textContent = `총 ${Math.round(cursor)}초 · 컷당 ${(cursor / cuts.length).toFixed(1)}초 · 내레이션에 맞춘 길이`;
+  return true;
+}
+
+/** 음성 pill — 바꾸면 캐시를 비우고 새 목소리로 다시 준비합니다. */
+async function setNarrationVoice(name) {
+  if (!NARRATION_VOICES[name] || narration.voice === name) return;
+  narration.voice = name;
+  narration.cache.clear();
+  narration.failed = 0;
+  stopNarration();
+  paintVoicePills();
+  if (name === 'browser') {
+    paintNarrationNote('브라우저 음성으로 읽습니다. 영상 파일에는 음성이 들어가지 않습니다.');
+    if (player.playing) speak(state.pkg.cuts[player.idx]);
+    return;
+  }
+  if (!state.pkg) return;
+  await prepareNarration();
+  if (retimeToNarration()) updateFrame(true);
+  if (player.playing) playNarration(player.idx, Math.max(0, player.t - state.pkg.cuts[player.idx].start));
+}
+
+function paintVoicePills() {
+  $$('[data-voice]').forEach((btn) => {
+    const on = btn.dataset.voice === narration.voice;
+    btn.className = `px-3 py-2 rounded-xl text-[11px] font-bold border transition ${
+      on
+        ? 'bg-violet-500/20 border-violet-400/50 text-violet-200'
+        : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-200'
+    }`;
+    btn.setAttribute('aria-pressed', String(on));
+  });
+}
+
+/** 비주얼 스타일 토글 — 대본 요청·이미지 요청 본문에 그대로 들어갑니다. */
+function setVisualStyle(name) {
+  if (!VISUAL_STYLES[name] || state.visualStyle === name) return;
+  state.visualStyle = name;
+  paintStyleToggle();
+  toast(`${VISUAL_STYLES[name].emoji} ${VISUAL_STYLES[name].label} 스타일로 새로 만듭니다 — 대본을 다시 생성해 주세요.`);
+}
+
+function paintStyleToggle() {
+  $$('[data-style]').forEach((btn) => {
+    const on = btn.dataset.style === state.visualStyle;
+    btn.className = `px-3 py-3 rounded-xl text-xs font-bold border transition text-left ${
+      on ? 'bg-violet-500/15 border-violet-400/50 text-violet-100' : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-200'
+    }`;
+    btn.setAttribute('aria-pressed', String(on));
+  });
+  const note = $('#styleNote');
+  if (note) {
+    note.textContent =
+      state.visualStyle === '3d'
+        ? '미니어처 다이오라마 · 등각 투시 · GI 조명 — 3D 쇼츠 느낌의 컷 이미지를 만듭니다.'
+        : '필름 스틸 · 자연광 · 얕은 심도 — 실사 다큐 느낌의 컷 이미지를 만듭니다.';
+  }
+}
+
 /* ───────────────────── 🎬 영상 파일 내보내기 ───────────────────── */
 
 function recorderMime() {
@@ -554,23 +864,37 @@ function recorderMime() {
   return '';
 }
 
-/** 녹화된 blob 의 실제 컨테이너·코덱을 확인합니다(확장자·안내 문구를 정직하게). */
+/** 녹화된 blob 의 실제 컨테이너·코덱·오디오 트랙 유무를 확인합니다(안내 문구를 정직하게). */
 async function sniffVideo(blob) {
   try {
-    const head = new Uint8Array(await blob.slice(0, 65536).arrayBuffer());
+    const head = new Uint8Array(await blob.slice(0, 262144).arrayBuffer());
     const ascii = (from, to) => String.fromCharCode(...head.slice(from, to));
+    const text = ascii(0, head.length);
+    const audioMarks = /(soun|mp4a|OpusHead|A_OPUS|A_VORBIS)/.test(text);
     if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) {
-      const text = ascii(0, Math.min(head.length, 8192));
-      return { container: 'webm', ext: 'webm', codec: /V_VP9/.test(text) ? 'vp9' : /V_VP8/.test(text) ? 'vp8' : 'unknown' };
+      return {
+        container: 'webm',
+        ext: 'webm',
+        codec: /V_VP9/.test(text) ? 'vp9' : /V_VP8/.test(text) ? 'vp8' : 'unknown',
+        audio: /A_OPUS/.test(text) ? 'opus' : /A_VORBIS/.test(text) ? 'vorbis' : audioMarks ? 'unknown' : 'none',
+      };
     }
     if (ascii(4, 8) === 'ftyp') {
-      const text = ascii(0, head.length);
-      const codec = /avc1/.test(text) ? 'h264' : /vp09/.test(text) ? 'vp9' : /hvc1|hev1/.test(text) ? 'hevc' : 'unknown';
-      return { container: 'mp4', ext: 'mp4', codec };
+      return {
+        container: 'mp4',
+        ext: 'mp4',
+        codec: /avc1/.test(text) ? 'h264' : /vp09/.test(text) ? 'vp9' : /hvc1|hev1/.test(text) ? 'hevc' : 'unknown',
+        audio: /mp4a/.test(text) ? 'aac' : audioMarks ? 'unknown' : 'none',
+      };
     }
-    return { container: 'unknown', ext: blob.type.includes('mp4') ? 'mp4' : 'webm', codec: 'unknown' };
+    return {
+      container: 'unknown',
+      ext: blob.type.includes('mp4') ? 'mp4' : 'webm',
+      codec: 'unknown',
+      audio: audioMarks ? 'unknown' : 'none',
+    };
   } catch {
-    return { container: 'unknown', ext: blob.type.includes('mp4') ? 'mp4' : 'webm', codec: 'unknown' };
+    return { container: 'unknown', ext: blob.type.includes('mp4') ? 'mp4' : 'webm', codec: 'unknown', audio: 'unknown' };
   }
 }
 
@@ -775,11 +1099,6 @@ function slugForFile() {
 
 async function exportVideo() {
   if (!state.pkg || exporter.running) return;
-  const mime = recorderMime();
-  if (!mime) {
-    toast('이 브라우저는 영상 녹화(MediaRecorder)를 지원하지 않습니다. 사파리/크롬 최신 버전에서 시도해 주세요.');
-    return;
-  }
 
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const W = isIOS ? 720 : 1080;
@@ -794,7 +1113,6 @@ async function exportVideo() {
   }
 
   const btn = $('#downloadVideoBtn');
-  const total = state.pkg.cuts[state.pkg.cuts.length - 1].end;
   const hasImages = state.pkg.cuts.some((c) => c.imageUrl);
   if (!hasImages) toast('아직 AI 장면이 없어 그라데이션 장면으로 렌더합니다. 🎨 버튼으로 장면을 먼저 만들면 더 좋습니다.');
 
@@ -802,12 +1120,41 @@ async function exportVideo() {
   exporter.running = true;
   exporter.cancelled = false;
   if (btn) btn.disabled = true;
-  setToolStatus(`장면 이미지 준비 중… (약 ${Math.round(total)}초 실시간 렌더)`, 0);
 
   try {
+    /* ① 내레이션 먼저 준비 — 영상에는 실제로 소리가 들어가야 합니다. */
+    setToolStatus('내레이션 음성 준비 중…', 0);
+    let withAudio = 0;
+    if (narration.voice !== 'browser') {
+      await prepareNarration();
+      if (retimeToNarration()) updateFrame(true);
+      withAudio = state.pkg.cuts.filter((c) => narrationBuffer(c)).length;
+    }
+    const total = state.pkg.cuts[state.pkg.cuts.length - 1].end;
+    const mime = recorderMime(withAudio > 0);
+    if (!mime) {
+      toast('이 브라우저는 영상 녹화(MediaRecorder)를 지원하지 않습니다. 사파리/크롬 최신 버전에서 시도해 주세요.');
+      return;
+    }
+
+    setToolStatus(`장면 이미지 준비 중… (약 ${Math.round(total)}초 실시간 렌더)`, 0);
     const images = await Promise.all(state.pkg.cuts.map((c) => loadImage(c.imageUrl)));
+
+    /* ② 캔버스 영상 + 내레이션 오디오를 한 스트림으로 */
     const stream = canvas.captureStream(30);
-    const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
+    const audioCtx = withAudio > 0 ? ensureAudioContext() : null;
+    let audioDest = null;
+    if (audioCtx) {
+      audioDest = audioCtx.createMediaStreamDestination();
+      const track = audioDest.stream.getAudioTracks()[0];
+      if (track) stream.addTrack(track);
+    }
+
+    const recorder = new MediaRecorder(stream, {
+      mimeType: mime,
+      videoBitsPerSecond: 6_000_000,
+      ...(audioDest ? { audioBitsPerSecond: 128_000 } : {}),
+    });
     exporter.recorder = recorder;
     const chunks = [];
     recorder.ondataavailable = (e) => {
@@ -821,13 +1168,36 @@ async function exportVideo() {
     // 첫 프레임을 먼저 그려 두면 녹화 시작이 검은 화면으로 잡히지 않습니다.
     drawVideoFrame(ctx, 0, images, W, H);
     recorder.start(250);
+
+    /* ③ 컷마다 내레이션을 정확한 시각에 예약합니다(A/V 동기). */
+    const audioSources = [];
+    let audioStartAt = 0;
+    if (audioDest) {
+      audioStartAt = audioCtx.currentTime + 0.15;
+      state.pkg.cuts.forEach((cut) => {
+        const buffer = narrationBuffer(cut);
+        if (!buffer) return;
+        const src = audioCtx.createBufferSource();
+        src.buffer = buffer;
+        // 음성이 컷보다 길면 말이 잘리지 않도록 살짝 당겨 재생(최대 2배).
+        src.playbackRate.value = Math.min(2, Math.max(1, buffer.duration / Math.max(0.5, cut.end - cut.start)));
+        src.connect(audioDest);
+        src.start(audioStartAt + cut.start);
+        audioSources.push(src);
+      });
+    }
+
     const started = performance.now();
+    // 오디오가 있을 때는 오디오 시계를 기준으로 그립니다(녹화 시점과 어긋나지 않도록).
+    const clockNow = () =>
+      audioDest ? Math.max(0, (audioCtx.currentTime - audioStartAt)) : (performance.now() - started) / 1000;
 
     await new Promise((resolve) => {
-      const step = (now) => {
-        const t = Math.min(total, (now - started) / 1000);
+      const step = () => {
+        const t = Math.min(total, clockNow());
         drawVideoFrame(ctx, t, images, W, H);
-        setToolStatus(`영상 렌더링 ${Math.round((t / total) * 100)}% · ${t.toFixed(1)}/${total.toFixed(1)}초`, t / total);
+        const audioNote = withAudio ? ` · 음성 ${withAudio}/${state.pkg.cuts.length}` : ' · 음성 없음';
+        setToolStatus(`영상 렌더링 ${Math.round((t / total) * 100)}% · ${t.toFixed(1)}/${total.toFixed(1)}초${audioNote}`, t / total);
         if (exporter.cancelled || t >= total) {
           resolve();
           return;
@@ -837,6 +1207,15 @@ async function exportVideo() {
       requestAnimationFrame(step);
     });
 
+    audioSources.forEach((src) => {
+      try {
+        src.stop();
+      } catch {
+        /* 이미 끝났습니다 */
+      }
+    });
+    stream.getAudioTracks().forEach((track) => track.stop());
+
     recorder.stop();
     await stopped;
     exporter.recorder = null;
@@ -844,6 +1223,11 @@ async function exportVideo() {
     const blob = new Blob(chunks, { type: mime.split(';')[0] });
     if (!blob.size) throw new Error('빈 파일이 만들어졌습니다. 다시 시도해 주세요.');
     const kind = await sniffVideo(blob);
+    if (kind.audio === 'none') {
+      // 녹화에 쓴 mime 이 오디오 코덱을 지정했다면 그 코덱이 실제로 들어간 것입니다.
+      if (/mp4a/.test(mime)) kind.audio = 'aac';
+      else if (/opus/.test(mime)) kind.audio = 'opus';
+    }
     const name = `${slugForFile()}_shorts_${W}x${H}.${kind.ext}`;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -855,8 +1239,13 @@ async function exportVideo() {
     setTimeout(() => URL.revokeObjectURL(url), 8000);
     const codecNote = kind.codec === 'h264' ? 'H.264 MP4' : kind.codec === 'vp9' || kind.codec === 'vp8' ? `${kind.codec.toUpperCase()} WebM` : kind.container.toUpperCase();
     const warn = kind.container === 'mp4' && kind.codec === 'vp9' ? ' · 일부 아이폰 플레이어에서 안 열릴 수 있습니다' : '';
-    setToolStatus(`${name} · ${(blob.size / 1024 / 1024).toFixed(1)}MB · ${codecNote}${warn} (음성 트랙 없음)`, 1);
-    toast(`영상 파일(${codecNote})을 내려받았습니다. 음성은 포함되지 않습니다.`);
+    const audioNote = kind.audio !== 'none' ? ` · ${audioLabel(kind.audio)} 내레이션 포함` : ' · 음성 트랙 없음';
+    setToolStatus(`${name} · ${(blob.size / 1024 / 1024).toFixed(1)}MB · ${codecNote}${warn}${audioNote}`, 1);
+    toast(
+      kind.audio !== 'none'
+        ? `영상 파일(${codecNote})을 내려받았습니다. 중후한 남성 내레이션이 함께 담겼습니다.`
+        : `영상 파일(${codecNote})을 내려받았습니다. 음성은 포함되지 않았습니다.`,
+    );
     setTimeout(() => setToolStatus('', 0), 8000);
   } catch (err) {
     setToolStatus('', 0);
@@ -865,6 +1254,13 @@ async function exportVideo() {
     exporter.running = false;
     if (btn) btn.disabled = false;
   }
+}
+
+function audioLabel(codec) {
+  if (codec === 'aac') return 'AAC';
+  if (codec === 'opus') return 'Opus';
+  if (codec === 'vorbis') return 'Vorbis';
+  return '음성';
 }
 
 /* ───────────────────────── 9:16 플레이어 ───────────────────────── */
@@ -1013,7 +1409,10 @@ function onCutEnter(idx) {
   $('#bigWord').textContent = cut.bigWord || '';
   player.beatIdx = -1;
   [...$('#sceneStack').children].forEach((s, i) => s.classList.toggle('is-active', i === idx));
-  if (player.playing && !player.mute) speak(cut);
+  if (player.playing && !player.mute) {
+    const offset = Math.max(0, player.t - cut.start);
+    if (!playNarration(idx, offset)) speak(cut);
+  }
 }
 
 function paintSubtitle(text, animate) {
@@ -1084,7 +1483,10 @@ function pickVoice() {
   const ko = voices.filter((v) => /^ko/i.test(v.lang));
   if (!ko.length) return;
   player.voice = ko.find((v) => /Google/i.test(v.name)) || ko.find((v) => /(Sora|Yuna|Suhyun|SunHi)/i.test(v.name)) || ko[0];
-  $('#voiceNote').textContent = `음성: ${player.voice.name} · 브라우저 음성(Web Speech) · 아이폰은 무음 모드를 해제하세요.`;
+  // 서버 TTS 를 쓰는 중에는 안내 문구를 건드리지 않습니다(내레이션 상태가 우선).
+  if (narration.voice === 'browser') {
+    $('#voiceNote').textContent = `음성: ${player.voice.name} · 브라우저 음성(Web Speech) · 아이폰은 무음 모드를 해제하세요.`;
+  }
 }
 
 function play() {
@@ -1120,6 +1522,7 @@ function pause() {
   $('#bigPlay')?.classList.remove('opacity-0', 'pointer-events-none');
   const btn = $('#playBtn');
   if (btn) btn.textContent = '▶ 재생';
+  stopNarration();
   try {
     window.speechSynthesis && window.speechSynthesis.cancel();
   } catch {
@@ -1137,14 +1540,17 @@ function seekToCut(i, autoplay = false) {
   if (autoplay) {
     if (player.playing) {
       player.last = performance.now();
-      if (!player.mute) speak(cut);
+      stopNarration();
+      if (!player.mute && !playNarration(i, 0)) speak(cut);
     } else {
       play();
     }
+  } else {
+    stopNarration();
   }
 }
 
-function openPlayer() {
+async function openPlayer() {
   if (!state.pkg) return;
   const section = $('#playerSection');
   section.classList.remove('hidden');
@@ -1154,7 +1560,22 @@ function openPlayer() {
   player.rate = state.pkg.tts.rate;
   $('#speedRange').value = String(player.rate);
   $('#speedVal').textContent = `${player.rate.toFixed(2)}x`;
+  paintVoicePills();
+  paintStyleToggle();
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // 내레이션을 먼저 준비한 뒤 재생합니다 — 재생 중에 컷 길이가 바뀌면 말이 끊기기 때문입니다.
+  if (narration.voice !== 'browser' && !narrationCount().ready) {
+    pause();
+    await prepareNarration();
+    if (!state.playerOpen) return;
+    if (retimeToNarration()) {
+      updateFrame(true);
+      renderCues();
+    }
+  } else {
+    defaultNarrationNote();
+  }
   play();
 }
 
@@ -1254,27 +1675,39 @@ function bind() {
     const b = $('#muteBtn');
     b.setAttribute('aria-pressed', String(!player.mute));
     b.textContent = player.mute ? '🔇 무음' : '🔊 음성';
+    setGain(!player.mute);
     if (player.mute) {
+      stopNarration();
       try {
         window.speechSynthesis && window.speechSynthesis.cancel();
       } catch {
         /* noop */
       }
-    } else if (player.playing) {
-      speak(state.pkg.cuts[player.idx]);
+    } else if (player.playing && state.pkg) {
+      const cut = state.pkg.cuts[player.idx];
+      if (!playNarration(player.idx, Math.max(0, player.t - cut.start))) speak(cut);
     }
   });
   $('#speedRange').addEventListener('input', (e) => {
     player.rate = Number(e.target.value);
     $('#speedVal').textContent = `${player.rate.toFixed(2)}x`;
-    if (player.playing && !player.mute) speak(state.pkg.cuts[player.idx]);
+    if (player.playing && !player.mute && state.pkg) {
+      const cut = state.pkg.cuts[player.idx];
+      if (!playNarration(player.idx, Math.max(0, player.t - cut.start))) speak(cut);
+    }
   });
+
+  $$('[data-voice]').forEach((btn) => btn.addEventListener('click', () => setNarrationVoice(btn.dataset.voice)));
+  $$('[data-style]').forEach((btn) => btn.addEventListener('click', () => setVisualStyle(btn.dataset.style)));
 
   $$('[data-export]').forEach((btn) => btn.addEventListener('click', () => doExport(btn.dataset.export)));
 
   $('#genImagesBtn')?.addEventListener('click', generateCutImages);
   $('#downloadVideoBtn')?.addEventListener('click', exportVideo);
   paintImageBadge('무료 AI 이미지 · 준비됨', 'ok');
+  paintStyleToggle();
+  paintVoicePills();
+  defaultNarrationNote();
   loadHealth();
 
   document.addEventListener('keydown', (e) => {

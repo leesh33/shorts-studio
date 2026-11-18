@@ -31,6 +31,7 @@ import {
   geminiReport,
 } from '../lib/gemini.js';
 import { callGeminiLadder } from '../lib/gemini-api.js';
+import { enhanceImagePrompt, normalizeStyle, styleCatalog } from '../lib/visual-style.js';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36';
 const FETCH_TIMEOUT_MS = 6500;
@@ -54,7 +55,7 @@ function scriptModels() {
 }
 
 /** Gemini 가 쓴 대본을 패키지에 입힙니다. 실패하면 { ok:false, report } 만 돌려줍니다. */
-async function writeWithGemini({ apiKey, url, topic, tone, targetLen, meta, transcript, facts, blueprint, basePkg }) {
+async function writeWithGemini({ apiKey, url, topic, tone, targetLen, meta, transcript, facts, blueprint, basePkg, style }) {
   const prompt = buildScriptPrompt({
     topic,
     tone,
@@ -63,6 +64,7 @@ async function writeWithGemini({ apiKey, url, topic, tone, targetLen, meta, tran
     transcript,
     facts,
     blueprint,
+    style,
   });
   const modes = url ? ['video', 'text'] : ['text'];
   const ladder = await callGeminiLadder({
@@ -387,6 +389,7 @@ export default async function handler(req, res) {
   // ② 새 쇼츠 패키지 — 로컬 엔진(폴백 겸 기본 뼈대)
   const tone = String(body.tone || 'auto');
   const facts = String(body.facts || '').slice(0, 4000);
+  const visualStyle = normalizeStyle(body.style);
   let pkg;
   try {
     pkg = generatePackage({
@@ -424,6 +427,7 @@ export default async function handler(req, res) {
         facts,
         blueprint,
         basePkg: pkg,
+        style: visualStyle,
       });
       gemini = result.report;
       if (result.ok) {
@@ -439,10 +443,21 @@ export default async function handler(req, res) {
     gemini = { ok: false, reason: 'no-key' };
   }
 
+  // ④ 컷 장면 프롬프트에 비주얼 스타일을 입힙니다 — 대본(로컬·Gemini) 어느 경로든 같은 결과.
+  //    이미지 생성 단계에서도 같은 함수가 불리지만(중복 방지), 여기서 입혀 두면
+  //    '장면 프롬프트' 복사와 컷 카드에도 스타일이 그대로 보입니다.
+  pkg = {
+    ...pkg,
+    cuts: pkg.cuts.map((cut) => ({ ...cut, visualPrompt: enhanceImagePrompt(cut.visualPrompt, visualStyle) })),
+    meta: { ...pkg.meta, visualStyle },
+  };
+
   return send(res, 200, {
     ok: true,
     mode,
     gemini,
+    visualStyle,
+    visualStyles: styleCatalog(),
     analysis: { ...analysis, blueprint },
     package: { ...pkg, meta: { ...pkg.meta, mode } },
   });

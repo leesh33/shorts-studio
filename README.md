@@ -3,22 +3,27 @@
 바이럴 쇼츠의 **성공 공식(Viral DNA)** 을 읽어서, 내 주제로 새 숏폼 **대본 + 컷별 AI 장면 + 9:16 영상 파일**까지 만드는 웹 앱.
 
 - 라이브: https://shorts-studio-navy.vercel.app
-- 스택: 정적 HTML/Tailwind(빌드된 CSS 커밋) + Vercel Serverless Functions 3개
-  (`/api/analyze-and-generate` · `/api/generate-image` · `/api/health`)
+- 스택: 정적 HTML/Tailwind(빌드된 CSS 커밋) + Vercel Serverless Functions 4개
+  (`/api/analyze-and-generate` · `/api/generate-image` · `/api/tts` · `/api/health`)
 - 화면: **VIRAL REMIX** 디자인(#090D19 · violet→blue 그라데이션) 유지
 
 ## 화면 흐름
 
-1. **Create Your Remix** — `01. Reference Video`(유튜브 숏츠 URL) + `02. Your New Topic`(한 줄).
+1. **Create Your Remix** — `01. Reference Video`(유튜브 숏츠 URL) + `02. Your New Topic`(한 줄)
+   + `03. Visual Style`(**🎨 3D 입체 렌더링**(기본) / 🎥 실사 시네마틱).
 2. **AI ANALYSIS ENGINE** — 실제 요청이 도는 동안 3단계 진행률.
 3. **Viral DNA Analysis** — 레퍼런스에서 읽은 `HOOK STRATEGY` / `AVG. CAPTION` / `RECOMMENDED PACE` + 근거(evidence).
    결과 제목 옆 **모드 배지**가 `GEMINI · 모델명` 또는 `LOCAL TEMPLATE` 로 지금 무엇이 만들었는지 정직하게 보여 줍니다.
 4. **Your Remix Script** — 6~8개 씬 카드(대본·연출·카메라·확인할 것). 강조 키워드는 보라색.
 5. **✨ 이 대본으로 AI 음성 및 자막 렌더링 시작하기 →** — 9:16 라이브 플레이어 + **AI SCENE & VIDEO** 도구:
    - **🎨 컷별 AI 이미지 생성** — 컷마다 Gemini 이미지 모델로 9:16 실사 장면을 만들어 플레이어에 입힙니다(진행률·실패 사유 표시).
-   - **🎬 영상 파일 다운로드** — 캔버스(1080×1920, 아이폰은 720×1280)에 켄번즈 장면 + 굵은 자막 + 진행바를 그려
-     `MediaRecorder` 로 실제 영상 파일을 만듭니다. 크롬은 **WebM(VP9)**, 아이폰 사파리는 **MP4(H.264)**.
-     녹화가 끝나면 컨테이너·코덱을 실제 바이트로 확인해 파일 이름과 안내를 맞춥니다.
+   - **🎬 영상 파일 다운로드** — 캔버스(1080×1920, 아이폰은 720×1280)에 켄번즈 장면 + 굵은 자막 + 진행바를 그리고
+     **중후한 남성 내레이션 오디오 트랙**을 `AudioContext`+`MediaStreamAudioDestinationNode` 로 같은 스트림에 섮어
+     `MediaRecorder` 로 실제 영상 파일을 만듭니다. 크롬은 **WebM(VP9+Opus)**, 아이폰 사파리는 **MP4(H.264+AAC)**.
+     녹화가 끝나면 컨테이너·코덱·오디오 트랙 유무를 실제 바이트로 확인해 파일 이름과 안내를 맞춥니다.
+   - **내레이션 음성 pill** — `중후한 남성 · 기본`(ko-KR-InJoonNeural, pitch -10%) / `차분한 다큐 톤`(ko-KR-HyunsuMultilingualNeural, rate -14%) /
+     `브라우저 음성`(서버 TTS 실패 시 조용한 폴백). 음성은 컷 길이에 맞춰 재생되고, 내레이션이 길면
+     컷 타임라인을 음성 길이에 맞춰 늘려(최대 14초/컷) 말이 잘리지 않습니다.
    - 한국어 Web Speech 음성(1.0~1.4배속·음소거), 컷별 진행 세그먼트·스크러빙, CUE SHEET,
      스크립트 복사 / `.srt` / 장면 프롬프트 / JSON 내보내기.
 
@@ -30,25 +35,33 @@
 | DNA 분석 | **`GEMINI_API_KEY` 가 있으면** Gemini 가 레퍼런스 영상을 `fileData.fileUri` 로 직접 보고 훅 공식·템포·자막 스타일·말투를 읽습니다(영상 입력이 막히면 메타데이터·자막 텍스트로 재시도). 키가 없으면 로컬 계산(훅 유형·문장 길이·분당 어절·컷 수)으로 대체합니다. |
 | 대본 | Gemini 가 6~8컷 한국어 대본 + 영어 9:16 장면 프롬프트를 씁니다. 응답이 형식에 못 미치면(컷 6개 미만·JSON 깨짐·시간 초과) **로컬 엔진 대본으로 조용히 폴백**하고 `mode: "template"` 으로 표시합니다. 확인되지 않은 숫자·일정은 지어내지 말라는 규칙을 프롬프트에 넣고, 컷마다 `확인:` 줄을 남깁니다. |
 | 이미지 | **빌링 없이 무료로 동작합니다.** ① `GEMINI_API_KEY` 가 있으면 Gemini 이미지 모델을 먼저 시도하고(나중에 빌링을 켜면 자동으로 Gemini 결과가 쓰임), ② 429(무료 등급 이미지 한도 0)·404·장애면 **무료 제공자로 자동 폴백**합니다 — Pollinations(`image.pollinations.ai`, 실측 5초·`image/jpeg`·576×1024) → HF FLUX.1-schnell Space(실측 9초·`image/webp`·720×1280). ③ 바이트는 **서버에서** 받아 `data:` URL 로 돌려주므로 브라우저 캔버스가 오염되지 않고 🎬 영상 다운로드에 CORS 오류가 없습니다. ④ 익명 Pollinations 는 **IP당 45초에 1장**이라, 화면은 막힌 컷만 서버가 알려준 초만큼 쉬었다가 최대 4차까지 다시 보냅니다. 그래도 안 되면 컷별로 정직한 오류(`429 free-busy` + `retryAfterMs`)를 보여 줍니다 — 가짜 성공 없음. 무료 이미지에는 제공자 워터마크가 하단 1~2%에 작게 붙고, 플레이어·영상에서는 안전 영역(하단 5%)을 잘라 프레임 밖으로 보냅니다. 함수 응답 한도(4.5MB)를 넘는 이미지는 413 으로 알립니다. |
-| 영상 | 브라우저 안에서 실시간 렌더(약 대본 길이만큼 걸립니다). **음성 트랙은 들어가지 않습니다** — Web Speech 출력은 캔버스로 녹화할 수 없습니다. MediaRecorder WebM 은 길이 메타데이터(duration)를 파일에 쓰지 않아 일부 편집기에서 재생 시간이 ∞ 로 보일 수 있습니다(브라우저 재생·업로드는 정상). |
-| 음성 | 브라우저 음성 미리듣기만. 실제 TTS 엔진은 이 범위 밖입니다. |
+| 영상 | 브라우저 안에서 실시간 렌더(약 대본 길이만큼 걸립니다). **중후한 남성 내레이션 오디오 트랙이 함께 들어갑니다**(음성 준비된 컷만; 나머지 컷은 무음). MediaRecorder WebM 은 길이 메타데이터(duration)를 파일에 쓰지 않아 일부 편집기에서 재생 시간이 ∞ 로 보일 수 있습니다(브라우저 재생·업로드는 정상). |
+| 음성 | **`/api/tts`** — Microsoft Edge 읽어주기 음성을 서버에서 MP3 로 만듭니다(API 키·결제 없음). `ko-KR-InJoonNeural`(pitch -10%, rate -8%) 이 기본 '중후한 남성'. 실패하면 화면이 브라우저 음성으로 조용히 폴백하고, 그 사실을 숨기지 않습니다. 무료 서비스라 예고 없이 막힐 수 있어 음성 실패 시에도 대본·자막·영상은 그대로 쓸 수 있습니다. |
+| 비주얼 스타일 | **3D 입체 렌더링**(기본) · 실사 시네마틱. 영어 장면 프롬프트에 다이오라마/등각 투시/GI 조명 또는 필름 스틸 언어를 입혀 무료 이미지 모델의 결과 톤을 바꿉니다(`lib/visual-style.js`). 반대 스타일 단어는 걷어내고, 같은 스타일을 두 번 입히지 않습니다. |
 
 ## API
 
 ```
 POST /api/analyze-and-generate
 { "url": "https://youtube.com/shorts/ID", "topic": "검단신도시 2028년 교통 호재",
-  "tone": "auto", "length": 36, "facts": "선택", "referenceText": "선택" }
-→ { ok: true, mode: "gemini" | "template", gemini: { ok, model?, ms?, attempts?, reason? },
+  "tone": "auto", "length": 36, "facts": "선택", "referenceText": "선택", "style": "3d" | "cinematic" }
+→ { ok: true, mode: "gemini" | "template", visualStyle, gemini: { ok, model?, ms?, attempts?, reason? },
     analysis: { source, attempts, blueprint }, package: { meta, titles, cuts, tts, copy, ... } }
 
 POST /api/generate-image
-{ "prompt": "English 9:16 photoreal prompt", "aspectRatio": "9:16", "cutId": "cut-3" }
-→ { ok: true, image: "data:image/jpeg;base64,…", mimeType, model, provider, seed, free, ms, cutId }
+{ "prompt": "English 9:16 prompt", "aspectRatio": "9:16", "cutId": "cut-3", "style": "3d" }
+→ { ok: true, image: "data:image/jpeg;base64,…", mimeType, model, provider, visualStyle, seed, free, ms, cutId }
   · provider: "gemini" | "pollinations-free" | "hf-flux-free"
   · 무료 경로가 모두 막힘 → 429 { error: "free-busy", retryAfterMs }, 실패 → 502, 너무 큼 → 413
 
-GET  /api/generate-image → { ok, hasGeminiKey, models, imagens, freeProviders }   (키 값은 없음)
+POST /api/tts
+{ "text": "읽을 문장(400자 이내)", "voice": "deep" | "docu", "speed": 1 }
+→ 200 audio/mpeg (실제 MP3 바이트)
+  · 헤더: X-TTS-Voice(ko-KR-InJoonNeural) · X-TTS-Ms · X-TTS-Cached
+  · 빈 문장/너무 김 → 400, 음성 서비스 실패 → 502 { ok:false, error:"timeout"|"upstream"|"empty-audio" }
+
+GET  /api/tts              → { ok, engine, voices, limits }
+GET  /api/generate-image → { ok, hasGeminiKey, models, imagens, freeProviders, visualStyles }   (키 값은 없음)
 GET  /api/health         → { ok, app, hasYoutubeKey, hasGeminiKey, geminiModel, imageModel, node }
 ```
 
@@ -81,11 +94,17 @@ app.js                         폼·진행률·DNA·씬 렌더·9:16 플레이�
 lib/engine.js                  URL 파싱 · 레퍼런스 분석 · 로컬 대본 생성 (순수 함수)
 lib/gemini.js                  Gemini 프롬프트·응답 파싱·대본 정규화 (순수 함수)
 lib/gemini-api.js              Gemini REST 호출(모델·입력모드 사다리, 이미지 생성)
-api/analyze-and-generate.js    메타데이터 수집 + (Gemini) 분석·대본 + 폴백
+lib/free-image.js              무료 이미지 사다리(Pollinations · HF FLUX) + 이미지 판별
+lib/tts.js                     중후한 남성 TTS(Edge 읽어주기) · 문장 정리 · 캐시
+lib/visual-style.js            3D 다이오라마 / 실사 시네마틱 프롬프트 언어
+api/analyze-and-generate.js    메타데이터 수집 + (Gemini) 분석·대본 + 폴백 + 스타일 적용
 api/generate-image.js          컷별 9:16 이미지 생성
+api/tts.js                     컷 내레이션 MP3
 api/health.js                  배포 확인 (키 유무만)
 tests/engine.test.mjs          로컬 엔진 테스트
 tests/gemini.test.mjs          프롬프트·파싱·정규화 테스트
 tests/api.test.mjs             API 핸들러 테스트(네트워크 스텁, 키 비노출 확인)
+tests/tts.test.mjs             TTS 문장 정리·캐시·실패 처리
+tests/visual-style.test.mjs    3D/실사 스타일 프롬프트·API 반영
 tools/serve.mjs                로컬 미리보기 서버
 ```

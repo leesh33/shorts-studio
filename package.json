@@ -14,5 +14,8 @@
   },
   "devDependencies": {
     "tailwindcss": "^3.4.17"
+  },
+  "dependencies": {
+    "node-edge-tts": "^1.2.12"
   }
 }

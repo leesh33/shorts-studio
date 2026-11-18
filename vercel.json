@@ -6,9 +6,16 @@
   "functions": {
     "api/analyze-and-generate.js": { "maxDuration": 45 },
     "api/generate-image.js": { "maxDuration": 60 },
+    "api/tts.js": { "maxDuration": 30 },
     "api/health.js": { "maxDuration": 10 }
   },
   "headers": [
-    { "source": "/api/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
+    { "source": "/api/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    {
+      "source": "/api/tts",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400, s-maxage=86400" }
+      ]
+    }
   ]
 }

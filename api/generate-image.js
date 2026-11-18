@@ -23,8 +23,11 @@
 import { IMAGE_MODEL_FALLBACKS, IMAGEN_MODEL_FALLBACKS } from '../lib/gemini.js';
 import { generateSceneImage } from '../lib/gemini-api.js';
 import { FREE_PROVIDERS, generateFreeImage } from '../lib/free-image.js';
+import { enhanceImagePrompt, normalizeStyle, styleCatalog } from '../lib/visual-style.js';
 
 const MAX_PROMPT_CHARS = 1200;
+/** 스타일 접미사를 붙인 뒤의 상한 — 모델이 읽는 길이를 관리합니다. */
+const MAX_STYLED_PROMPT_CHARS = 1800;
 /** Vercel 함수 응답 한도(4.5MB) 안 — base64 3.6M자 ≈ 원본 2.7MB */
 const MAX_BASE64_CHARS = 3_600_000;
 /** Gemini 는 '먼저 한 번'만 보고 빨리 무료 경로로 넘어갑니다(함수 60초 안에서 무료 경로 시간을 남김). */
@@ -79,6 +82,7 @@ export default async function handler(req, res) {
       ok: true,
       hasGeminiKey: Boolean(geminiKey()),
       aspectRatios: ['9:16', '1:1', '16:9'],
+      visualStyles: styleCatalog(),
       models: imageModels(),
       imagens: IMAGEN_MODEL_FALLBACKS,
       freeProviders: FREE_PROVIDERS,
@@ -88,16 +92,20 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'method-not-allowed' });
 
   const body = await readBody(req);
-  const prompt = String(body.prompt || '').replace(/\s+/g, ' ').trim();
+  const rawPrompt = String(body.prompt || '').replace(/\s+/g, ' ').trim();
   const aspectRatio = ['9:16', '1:1', '16:9'].includes(String(body.aspectRatio || '')) ? String(body.aspectRatio) : '9:16';
   const cutId = String(body.cutId || '').slice(0, 20);
+  const visualStyle = normalizeStyle(body.style);
 
-  if (prompt.length < 8) {
+  if (rawPrompt.length < 8) {
     return send(res, 400, { ok: false, error: 'no-prompt', message: '이미지 프롬프트가 비어 있습니다.' });
   }
-  if (prompt.length > MAX_PROMPT_CHARS) {
+  if (rawPrompt.length > MAX_PROMPT_CHARS) {
     return send(res, 400, { ok: false, error: 'prompt-too-long', message: `프롬프트는 ${MAX_PROMPT_CHARS}자 이내로 보내주세요.` });
   }
+
+  // 스타일 언어(3D 다이오라마 / 실사 필름)를 프롬프트에 입힙니다 — 두 경로 모두 같은 프롬프트를 씁니다.
+  const prompt = enhanceImagePrompt(rawPrompt, visualStyle).slice(0, MAX_STYLED_PROMPT_CHARS);
 
   const apiKey = geminiKey();
   const attempts = [];
@@ -123,6 +131,7 @@ export default async function handler(req, res) {
           model: result.model,
           provider: 'gemini',
           providerLabel: PROVIDER_LABEL.gemini,
+          visualStyle,
           ms: result.ms,
           cutId,
           attempts: attempts.slice(0, 8),
@@ -160,6 +169,7 @@ export default async function handler(req, res) {
       model: free.model,
       provider: free.provider,
       providerLabel: PROVIDER_LABEL[free.provider] || '무료 AI',
+      visualStyle,
       seed: free.seed,
       free: true,
       geminiNote,
