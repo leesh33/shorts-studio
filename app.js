@@ -153,7 +153,7 @@ function two(n) {
   return String(Math.max(0, Math.floor(n))).padStart(2, '0');
 }
 function clock(sec) {
-  const s = Math.max(0, Number(sec) || 0);
+  const s = Math.max(0, Math.round(Number(sec) || 0));
   return `${two(s / 60)}:${two(s % 60)}`;
 }
 
@@ -210,7 +210,7 @@ function renderResult(analysis) {
       <div class="grid md:grid-cols-2 gap-4">
         <div class="bg-[#0B1020] rounded-xl p-5">
           <p class="text-xs text-violet-400 font-bold mb-3">🎙 SCRIPT / DIALOGUE</p>
-          <p class="text-sm leading-7 text-slate-200">${highlight(stripMarkup(cut.subtitle))}</p>
+          <p class="text-sm leading-7 text-slate-200">${highlight(cut.subtitle)}</p>
         </div>
         <div class="bg-[#0B1020] rounded-xl p-5">
           <p class="text-xs text-blue-400 font-bold mb-3">🎬 VISUAL DIRECTION</p>
