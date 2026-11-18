@@ -4,6 +4,7 @@
  */
 import {
   TONES,
+  STRATEGY_INFO,
   LENGTHS,
   PRESETS,
   ensureEmphasis,
@@ -227,7 +228,8 @@ function renderStudio() {
   $('#studioTopic').textContent = pkg.meta.topic;
   $('#studioEyebrow').textContent = `${pkg.meta.strategyLabel} · ${pkg.cuts.length}컷 · 약 ${Math.round(pkg.meta.totalSec)}초`;
 
-  document.documentElement.style.setProperty('--accent', pkg.cuts[0]?.mood ? accentFor(pkg) : '#FFE14D');
+  const cutAccent = STRATEGY_INFO[pkg.meta.strategy]?.accent || '#FFE14D';
+  document.documentElement.style.setProperty('--cut-accent', cutAccent);
 
   renderBlueprint();
   renderTitles();
@@ -237,21 +239,6 @@ function renderStudio() {
   player.rate = pkg.tts.rate;
   $('#speedRange').value = String(pkg.tts.rate);
   $('#speedVal').textContent = `${pkg.tts.rate.toFixed(2)}x`;
-}
-
-function accentFor(pkg) {
-  // 첫 컷 무드의 밝은 쪽을 강조색으로 (전략별 팔레트와 어울리게)
-  return pkg.cuts[0]?.mood?.from ? lighten(pkg.cuts[0].mood.to, 0.35) : '#FFE14D';
-}
-
-function lighten(hex, amt) {
-  const h = String(hex).replace('#', '');
-  if (h.length !== 6) return '#FFE14D';
-  const n = parseInt(h, 16);
-  const r = Math.min(255, ((n >> 16) & 255) + Math.round(255 * amt * 0.6));
-  const g = Math.min(255, ((n >> 8) & 255) + Math.round(255 * amt * 0.6));
-  const b = Math.min(255, (n & 255) + Math.round(255 * amt * 0.6));
-  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
 }
 
 function renderBlueprint() {
@@ -472,7 +459,7 @@ function onCutEnter(idx) {
 function paintSubtitle(cut, animate) {
   const el = $('#subtitle');
   const text = cut.subtitle || '';
-  const lines = wrapLines(text, 16).slice(0, 3);
+  const lines = wrapLines(text, 17).slice(0, 3);
   el.innerHTML = lines
     .map((line) => {
       const parts = [];
