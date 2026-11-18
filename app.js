@@ -249,18 +249,25 @@ function buildBeats(cut) {
   const sentences = text.split(/(?<=[.!?…])\s+/).filter(Boolean);
   const pieces = [];
   for (const sentence of sentences) {
-    const words = sentence.split(' ');
-    let line = '';
-    for (const w of words) {
-      const plainLen = stripMarkup(`${line} ${w}`).length;
-      if (line && plainLen > 20) {
-        pieces.push(line);
-        line = w;
+    const plain = stripMarkup(sentence);
+    if (plain.length <= 26) {
+      pieces.push(sentence);
+      continue;
+    }
+    // 긴 문장만 쉼표 → 어절 순서로 끊습니다 (말이 중간에서 끊기지 않게).
+    const commaAt = Math.max(sentence.lastIndexOf(', ', 26), sentence.lastIndexOf(' ', 24));
+    if (commaAt > 8 && commaAt < sentence.length - 2) {
+      pieces.push(sentence.slice(0, commaAt + 1).trim());
+      pieces.push(sentence.slice(commaAt + 1).trim());
+    } else {
+      const cut = sentence.lastIndexOf(' ', 24);
+      if (cut > 8) {
+        pieces.push(sentence.slice(0, cut).trim());
+        pieces.push(sentence.slice(cut + 1).trim());
       } else {
-        line = line ? `${line} ${w}` : w;
+        pieces.push(sentence);
       }
     }
-    if (line) pieces.push(line);
   }
   const totalChars = pieces.reduce((n, p) => n + stripMarkup(p).length, 0) || 1;
   const span = Math.max(0.6, cut.end - cut.start);
