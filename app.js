@@ -398,11 +398,15 @@ function paintSubtitle(text, animate) {
       const parts = [];
       const re = /\[([^\]]+)\]|([^\s\[]+)/g;
       let m;
-      while ((m = re.exec(line)) !== null) parts.push({ text: m[1] || m[2], hl: Boolean(m[1]) });
+      let lastEnd = 0;
+      while ((m = re.exec(line)) !== null) {
+        const gap = line.slice(lastEnd, m.index);
+        parts.push({ text: m[1] || m[2], hl: Boolean(m[1]), space: parts.length > 0 && gap.includes(' ') });
+        lastEnd = re.lastIndex;
+      }
       let html = '';
-      parts.forEach((part, i) => {
-        
-        const glue = i > 0 && !/^[,.\u00b7!?~)\]…]/.test(part.text) ? ' ' : '';
+      parts.forEach((part) => {
+        const glue = part.space ? ' ' : '';
         html += `${glue}<span class="${part.hl ? 'text-violet-300' : ''}">${escapeHtml(part.text)}</span>`;
       });
       return `<span class="block">${html}</span>`;
