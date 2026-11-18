@@ -876,13 +876,23 @@ function recorderMime(withAudio = false) {
   return '';
 }
 
+/** 바이트 → ASCII 문자열 (큰 배열을 한 번에 펼치면 스택이 넘칩니다 — 8KB 청크로 나눕니다). */
+function bytesToAscii(bytes, limit = 524288) {
+  const n = Math.min(bytes.length, limit);
+  let out = '';
+  const CHUNK = 8192;
+  for (let i = 0; i < n; i += CHUNK) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(n, i + CHUNK)));
+  }
+  return out;
+}
+
 /** 녹화된 blob 의 실제 컨테이너·코덱·오디오 트랙 유무를 확인합니다(안내 문구를 정직하게). */
 async function sniffVideo(blob) {
   try {
-    const head = new Uint8Array(await blob.slice(0, 262144).arrayBuffer());
-    const ascii = (from, to) => String.fromCharCode(...head.slice(from, to));
-    const text = ascii(0, head.length);
-    const audioMarks = /(soun|mp4a|OpusHead|A_OPUS|A_VORBIS)/.test(text);
+    const head = new Uint8Array(await blob.slice(0, 524288).arrayBuffer());
+    const text = bytesToAscii(head);
+    const audioMarks = /(soun|mp4a|Opus|dOps|A_OPUS|A_VORBIS)/.test(text);
     if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) {
       return {
         container: 'webm',
@@ -891,12 +901,12 @@ async function sniffVideo(blob) {
         audio: /A_OPUS/.test(text) ? 'opus' : /A_VORBIS/.test(text) ? 'vorbis' : audioMarks ? 'unknown' : 'none',
       };
     }
-    if (ascii(4, 8) === 'ftyp') {
+    if (String.fromCharCode.apply(null, head.subarray(4, 8)) === 'ftyp') {
       return {
         container: 'mp4',
         ext: 'mp4',
         codec: /avc1/.test(text) ? 'h264' : /vp09/.test(text) ? 'vp9' : /hvc1|hev1/.test(text) ? 'hevc' : 'unknown',
-        audio: /mp4a/.test(text) ? 'aac' : audioMarks ? 'unknown' : 'none',
+        audio: /mp4a/.test(text) ? 'aac' : /(Opus|dOps)/.test(text) ? 'opus' : 'none',
       };
     }
     return {
