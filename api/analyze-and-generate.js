@@ -11,16 +11,103 @@
  *      - YOUTUBE_API_KEY 가 있으면 Data API v3 로 한 번 더 보강
  *   ② 그 정보로 '레퍼런스 블루프린트'(훅 유형·리듬·컷 수·자막 스타일·템포)를 만듭니다.
  *   ③ 주제 한 줄로 새 쇼츠 패키지(6~8컷)를 만듭니다.
+ *      - GEMINI_API_KEY 가 있으면 Gemini 가 레퍼런스를(영상까지) 보고 대본을 직접 씁니다 → mode: 'gemini'
+ *      - 키가 없거나·시간 초과·형식 오류면 로컬 엔진 대본으로 조용히 폴백 → mode: 'template'
  *
  * 원칙
  *   · 어떤 업스트림이 실패해도 500으로 죽지 않습니다. 정보가 없으면 '추정'으로 표시합니다.
- *   · 키는 서버 환경변수에만 있고 응답에 담지 않습니다.
+ *   · 키는 서버 환경변수에만 있고 응답에 담지 않습니다(응답에는 mode·모델명·시도 기록만).
  *   · CORS 를 열지 않아 이 사이트에서만 호출됩니다.
  */
 import { analyzeReference, generatePackage, parseYouTubeUrl } from '../lib/engine.js';
+import {
+  SCRIPT_MODEL_FALLBACKS,
+  buildScriptPrompt,
+  buildScriptBody,
+  parseScriptJson,
+  normalizeAiScript,
+  mergeScriptIntoPackage,
+  mergeDnaIntoBlueprint,
+  geminiReport,
+} from '../lib/gemini.js';
+import { callGeminiLadder } from '../lib/gemini-api.js';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36';
 const FETCH_TIMEOUT_MS = 6500;
+
+/** Gemini 대본 호출 예산 — 레퍼런스 수집(≈12초) + Gemini(≈26초) 가 함수 시간(45초) 안에 들어옵니다. */
+const GEMINI_BUDGET_MS = 26000;
+
+function geminiKey() {
+  return String(process.env.GEMINI_API_KEY || process.env.GEMINI_KEY || '').trim();
+}
+
+/** GEMINI_MODEL 이 있으면 그것부터, 그 뒤 기본 후보들. */
+function scriptModels() {
+  const preferred = String(process.env.GEMINI_MODEL || '').trim();
+  const list = [];
+  [preferred, ...SCRIPT_MODEL_FALLBACKS].forEach((m) => {
+    const name = String(m || '').trim();
+    if (name && list.indexOf(name) < 0) list.push(name);
+  });
+  return list;
+}
+
+/** Gemini 가 쓴 대본을 패키지에 입힙니다. 실패하면 { ok:false, report } 만 돌려줍니다. */
+async function writeWithGemini({ apiKey, url, topic, tone, targetLen, meta, transcript, facts, blueprint, basePkg }) {
+  const prompt = buildScriptPrompt({
+    topic,
+    tone,
+    targetLen,
+    meta,
+    transcript,
+    facts,
+    blueprint,
+  });
+  const modes = url ? ['video', 'text'] : ['text'];
+  const ladder = await callGeminiLadder({
+    apiKey,
+    models: scriptModels(),
+    modes,
+    timeoutMs: 20000,
+    budgetMs: GEMINI_BUDGET_MS,
+    buildBody: ({ model, mode }) =>
+      buildScriptBody({ prompt, referenceUrl: url, useVideo: mode === 'video', model }),
+  });
+
+  if (!ladder.ok) {
+    return { ok: false, report: geminiReport({ ok: false, ms: ladder.ms, attempts: ladder.attempts, reason: ladder.reason }) };
+  }
+
+  const parsed = parseScriptJson(ladder.text);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      report: geminiReport({ ok: false, ms: ladder.ms, attempts: ladder.attempts, reason: parsed.reason }),
+    };
+  }
+
+  const normalized = normalizeAiScript(parsed.data, { topic, tone, targetLen, blueprint });
+  if (!normalized.ok) {
+    return {
+      ok: false,
+      report: geminiReport({ ok: false, ms: ladder.ms, attempts: ladder.attempts, reason: normalized.reason }),
+    };
+  }
+
+  const pkg = mergeScriptIntoPackage(basePkg, normalized, { topic, blueprint, facts });
+  const nextBlueprint = mergeDnaIntoBlueprint(blueprint, normalized.dna, {
+    model: ladder.model,
+    videoWatched: ladder.usedMode === 'video',
+  });
+  return {
+    ok: true,
+    pkg,
+    blueprint: nextBlueprint,
+    report: geminiReport({ ok: true, model: ladder.model, ms: ladder.ms, attempts: ladder.attempts }),
+    extra: { videoWatched: ladder.usedMode === 'video', warnings: normalized.warnings },
+  };
+}
 
 function send(res, status, payload) {
   res.statusCode = status;
@@ -272,11 +359,15 @@ export default async function handler(req, res) {
   // ① 레퍼런스 분석 (클라이언트가 이미 받아둔 blueprint 가 있으면 재사용)
   let blueprint = body.reference && typeof body.reference === 'object' ? body.reference : null;
   let analysis = { source: 'client-cache', attempts: [{ step: 'client-cache', ok: true }] };
+  let refMeta = null;
+  let transcriptText = '';
 
   if (!blueprint || !blueprint.source) {
     const { meta, attempts, transcript } = await fetchReference(parsed.videoId, parsed.canonical);
     const userText = String(body.referenceText || '').slice(0, 4000);
     const scriptText = userText || transcript || '';
+    refMeta = meta;
+    transcriptText = scriptText;
     blueprint = analyzeReference({
       url: parsed.canonical,
       topic,
@@ -293,19 +384,66 @@ export default async function handler(req, res) {
     analysis = { source: meta.fetchedBy, attempts, transcriptChars: scriptText.length, transcriptAuto: Boolean(!userText && transcript) };
   }
 
-  // ② 새 쇼츠 패키지
+  // ② 새 쇼츠 패키지 — 로컬 엔진(폴백 겸 기본 뼈대)
+  const tone = String(body.tone || 'auto');
+  const facts = String(body.facts || '').slice(0, 4000);
   let pkg;
   try {
     pkg = generatePackage({
       topic,
-      tone: String(body.tone || 'auto'),
+      tone,
       length: Number(body.length) || 0,
-      facts: String(body.facts || '').slice(0, 4000),
+      facts,
       blueprint,
     });
   } catch (err) {
     return send(res, 500, { ok: false, error: 'generate-failed', message: '생성 중 문제가 생겼습니다. 주제를 조금 바꿔 다시 시도해 주세요.' });
   }
 
-  return send(res, 200, { ok: true, analysis: { ...analysis, blueprint }, package: pkg });
+  // ③ Gemini 가 있으면 진짜 대본을 씁니다 (없거나 실패하면 ② 를 그대로 씁니다)
+  const apiKey = geminiKey();
+  let mode = 'template';
+  let gemini = { ok: false, reason: apiKey ? 'not-attempted' : 'no-key' };
+  if (apiKey) {
+    const meta = {
+      title: refMeta?.title || blueprint.source?.title || '',
+      channel: refMeta?.channel || blueprint.source?.channel || '',
+      description: refMeta?.description || blueprint.source?.description || '',
+      durationSec: refMeta?.durationSec || blueprint.source?.durationSec || 0,
+      tags: refMeta?.tags?.length ? refMeta.tags : blueprint.source?.hashtags || [],
+    };
+    try {
+      const result = await writeWithGemini({
+        apiKey,
+        url: parsed.canonical,
+        topic,
+        tone,
+        targetLen: Number(body.length) || blueprint.source?.durationSec || 36,
+        meta,
+        transcript: String(body.referenceText || '').slice(0, 4000) || transcriptText || '',
+        facts,
+        blueprint,
+        basePkg: pkg,
+      });
+      gemini = result.report;
+      if (result.ok) {
+        pkg = result.pkg;
+        blueprint = result.blueprint;
+        mode = 'gemini';
+        analysis = { ...analysis, geminiVideoWatched: result.extra.videoWatched, geminiWarnings: result.extra.warnings };
+      }
+    } catch (err) {
+      gemini = { ok: false, reason: String(err?.message || err).slice(0, 120) };
+    }
+  } else {
+    gemini = { ok: false, reason: 'no-key' };
+  }
+
+  return send(res, 200, {
+    ok: true,
+    mode,
+    gemini,
+    analysis: { ...analysis, blueprint },
+    package: { ...pkg, meta: { ...pkg.meta, mode } },
+  });
 }

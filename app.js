@@ -19,7 +19,15 @@ const state = {
   blueprint: null,
   loading: false,
   playerOpen: false,
+  mode: 'template',
+  gemini: null,
+  hasGeminiKey: null,
 };
+
+/* AI 이미지 생성 상태 — 한 컷씩 순서대로 만듭니다(한도·시간 보호) */
+const ai = { running: false, done: 0, failed: 0, error: '' };
+/* 영상 내보내기 상태 */
+const exporter = { running: false, recorder: null, cancelled: false };
 
 const player = {
   playing: false,
@@ -135,6 +143,8 @@ async function generate(event) {
     if (!res.ok || !data || !data.ok) throw new Error((data && data.message) || `요청 실패 (HTTP ${res.status})`);
 
     state.pkg = data.package;
+    state.mode = data.mode || data.package?.meta?.mode || 'template';
+    state.gemini = data.gemini || null;
     state.pkg.cuts.forEach((cut) => {
       cut.beats = buildBeats(cut);
     });
@@ -165,6 +175,7 @@ function renderResult(analysis) {
   const pkg = state.pkg;
   const bp = state.blueprint;
 
+  paintModeBadge();
   $('#resultSub').textContent = `${pkg.meta.strategyLabel} · ${pkg.cuts.length}컷 · 약 ${Math.round(pkg.meta.totalSec)}초`;
   $('#scriptTopic').textContent = pkg.meta.topic;
   $('#scriptMeta').textContent = `총 ${Math.round(pkg.meta.totalSec)}초 · 컷당 ${(pkg.meta.totalSec / pkg.cuts.length).toFixed(1)}초 · 템포 ${pkg.tts.rate}x`;
@@ -175,21 +186,25 @@ function renderResult(analysis) {
   $('#dnaHookDesc').textContent = hook.why || '첫 문장에서 결론을 미루는 구조';
 
   const rhythm = bp.rhythm || {};
+  const aiDna = bp.ai || null;
   if (rhythm.measured) {
     $('#dnaCaption').textContent = `${Math.max(6, rhythm.avgSentenceChars - 3)}~${rhythm.avgSentenceChars + 3}자`;
-    $('#dnaCaptionDesc').textContent = `레퍼런스 대사 평균 ${rhythm.avgSentenceChars}자 · 짧고 직관적인 자막`;
+    $('#dnaCaptionDesc').textContent = aiDna?.captionStyle
+      ? aiDna.captionStyle
+      : `레퍼런스 대사 평균 ${rhythm.avgSentenceChars}자 · 짧고 직관적인 자막`;
   } else {
     $('#dnaCaption').textContent = `${bp.subtitle?.maxCharsPerLine || 18}자 이내`;
-    $('#dnaCaptionDesc').textContent = '숏츠 표준값 · 짧고 직관적인 자막';
+    $('#dnaCaptionDesc').textContent = aiDna?.captionStyle || '숏츠 표준값 · 짧고 직관적인 자막';
   }
 
   $('#dnaPace').textContent = `${bp.pacing?.tempo || 1.21}x · 컷당 ${bp.pacing?.cutSecAvg || 5}초`;
-  $('#dnaPaceDesc').textContent = rhythm.wpm ? `분당 ${rhythm.wpm}어절 · 무음 없이 이어 붙이기` : '1~3초 단위 화면 전환 · 무음 없음';
+  $('#dnaPaceDesc').textContent = aiDna?.pacing || (rhythm.wpm ? `분당 ${rhythm.wpm}어절 · 무음 없이 이어 붙이기` : '1~3초 단위 화면 전환 · 무음 없음');
 
   const srcMap = { page: '영상 페이지', oembed: 'oEmbed', 'data-api': 'YouTube API', none: '메타데이터 없음' };
+  const modeNote = state.mode === 'gemini' ? ` · Gemini 분석${state.gemini?.model ? ` (${state.gemini.model})` : ''}` : ' · 로컬 엔진 분석';
   $('#dnaSource').textContent = bp.source?.title
-    ? `${bp.source.title.slice(0, 70)} · ${bp.source.channel || '채널 미확인'} · ${bp.source.durationKnown ? `${bp.source.durationSec}초` : '길이 추정'} · 읽은 경로: ${srcMap[bp.source.fetchedBy] || bp.source.fetchedBy}`
-    : '레퍼런스 메타데이터를 못 가져와 표준값으로 분석했습니다.';
+    ? `${bp.source.title.slice(0, 70)} · ${bp.source.channel || '채널 미확인'} · ${bp.source.durationKnown ? `${bp.source.durationSec}초` : '길이 추정'} · 읽은 경로: ${srcMap[bp.source.fetchedBy] || bp.source.fetchedBy}${modeNote}`
+    : `레퍼런스 메타데이터를 못 가져와 표준값으로 분석했습니다.${modeNote}`;
 
   $('#dnaEvidence').innerHTML = (bp.evidence || []).map((line) => `<li>· ${escapeHtml(line)}</li>`).join('');
 
@@ -216,11 +231,17 @@ function renderResult(analysis) {
           <p class="text-xs text-violet-400 font-bold mb-3">🎙 SCRIPT / DIALOGUE</p>
           <p class="text-sm leading-7 text-slate-200">${highlight(cut.subtitle)}</p>
         </div>
-        <div class="bg-[#0B1020] rounded-xl p-5">
-          <p class="text-xs text-blue-400 font-bold mb-3">🎬 VISUAL DIRECTION</p>
-          <p class="text-sm leading-7 text-slate-400">${escapeHtml(cut.visualKo)}<span class="block mt-1 text-slate-500">카메라: ${escapeHtml(cut.camera)}</span></p>
+        <div class="bg-[#0B1020] rounded-xl p-5 flex gap-4">
+          <div class="min-w-0 flex-1">
+            <p class="text-xs text-blue-400 font-bold mb-3">🎬 VISUAL DIRECTION</p>
+            <p class="text-sm leading-7 text-slate-400">${escapeHtml(cut.visualKo)}<span class="block mt-1 text-slate-500">카메라: ${escapeHtml(cut.camera)}</span></p>
+          </div>
+          <div data-shot="${i}" class="hidden w-20 shrink-0 rounded-lg overflow-hidden border border-white/10 bg-black">
+            <img class="w-full h-full object-cover" alt="${escapeHtml(cut.label)} AI 장면" />
+          </div>
         </div>
       </div>
+      <p class="mt-3 text-[11px] text-slate-600">확인: ${escapeHtml(cut.factHint || '')}</p>
     `;
     list.appendChild(card);
   });
@@ -239,6 +260,485 @@ function escapeHtml(value) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/* ───────────────────── 모드 배지 · 키 확인 ───────────────────── */
+
+function paintModeBadge() {
+  const badge = $('#modeBadge');
+  if (!badge) return;
+  const isGemini = state.mode === 'gemini';
+  badge.textContent = isGemini ? `GEMINI${state.gemini?.model ? ` · ${state.gemini.model}` : ''}` : 'LOCAL TEMPLATE';
+  badge.className = `ml-auto text-[10px] font-black tracking-wider px-2.5 py-1 rounded-full border ${
+    isGemini ? 'text-emerald-300 border-emerald-400/30 bg-emerald-400/10' : 'text-slate-400 border-white/10 bg-white/5'
+  }`;
+  badge.title = isGemini
+    ? 'Gemini 가 레퍼런스를 읽고 대본을 직접 쓴 결과입니다.'
+    : 'GEMINI_API_KEY 가 없거나 응답이 늦어 로컬 엔진이 대본을 만들었습니다(정직한 표시).';
+}
+
+async function loadHealth() {
+  try {
+    const res = await fetch('/api/health', { cache: 'no-store' });
+    const data = await res.json();
+    state.hasGeminiKey = Boolean(data.hasGeminiKey);
+  } catch {
+    state.hasGeminiKey = null;
+  }
+  updateAiBanner();
+}
+
+/** 키가 없을 때 이유를 숨기지 않고 배너로 알립니다. */
+function updateAiBanner() {
+  const banner = $('#aiBanner');
+  if (!banner) return;
+  const show = state.hasGeminiKey === false;
+  banner.classList.toggle('hidden', !show);
+  const btn = $('#genImagesBtn');
+  if (btn) {
+    btn.title = show ? 'GEMINI_API_KEY 를 Vercel 에 추가하면 실제 장면 이미지를 만들 수 있습니다.' : '';
+    btn.classList.toggle('opacity-60', show);
+  }
+}
+
+function setToolStatus(text, ratio) {
+  const box = $('#toolStatus');
+  if (!box) return;
+  if (!text) {
+    box.classList.add('hidden');
+    return;
+  }
+  box.classList.remove('hidden');
+  $('#toolStatusText').textContent = text;
+  const fill = $('#toolStatusFill');
+  if (fill) fill.style.width = `${Math.round(Math.min(1, Math.max(0, Number(ratio) || 0)) * 100)}%`;
+}
+
+/* ───────────────────── 🎨 컷별 AI 이미지 생성 ───────────────────── */
+
+function applyCutImage(index) {
+  const pkg = state.pkg;
+  const cut = pkg?.cuts?.[index];
+  if (!cut || !cut.imageUrl) return;
+
+  const scene = $('#sceneStack')?.children?.[index];
+  if (scene) {
+    scene.style.backgroundImage = `linear-gradient(rgba(0,0,0,.22), rgba(0,0,0,.45)), url("${cut.imageUrl}")`;
+  }
+  const slot = document.querySelector(`[data-shot="${index}"]`);
+  if (slot) {
+    slot.classList.remove('hidden');
+    const img = slot.querySelector('img');
+    if (img && img.getAttribute('src') !== cut.imageUrl) img.src = cut.imageUrl;
+  }
+}
+
+function applyAllCutImages() {
+  if (!state.pkg) return;
+  state.pkg.cuts.forEach((cut, i) => {
+    if (cut.imageUrl) applyCutImage(i);
+  });
+}
+
+async function generateCutImages() {
+  if (!state.pkg) return;
+  if (ai.running) return;
+  if (state.hasGeminiKey === false) {
+    updateAiBanner();
+    toast('GEMINI_API_KEY 가 Vercel 에 없어 AI 이미지를 만들 수 없습니다. 아래 안내를 참고해 주세요.');
+    return;
+  }
+
+  const cuts = state.pkg.cuts;
+  const todo = cuts.filter((c) => !c.imageUrl);
+  if (!todo.length) {
+    toast('이미 모든 컷의 장면 이미지가 있습니다.');
+    return;
+  }
+
+  ai.running = true;
+  ai.done = cuts.length - todo.length;
+  ai.failed = 0;
+  ai.error = '';
+  const btn = $('#genImagesBtn');
+  btn.disabled = true;
+  setToolStatus(`컷 이미지 생성 중… (${ai.done}/${cuts.length})`, ai.done / cuts.length);
+
+  for (let i = 0; i < cuts.length; i += 1) {
+    const cut = cuts[i];
+    if (cut.imageUrl) continue;
+    setToolStatus(`컷 ${i + 1}/${cuts.length} 장면 생성 중…`, i / cuts.length);
+    try {
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: cut.visualPrompt, aspectRatio: '9:16', cutId: cut.id }),
+      });
+      const data = await res.json().catch(() => null);
+      if (data?.ok && data.image) {
+        cut.imageUrl = data.image;
+        ai.done += 1;
+        applyCutImage(i);
+      } else {
+        ai.failed += 1;
+        ai.error = String(data?.message || data?.error || `HTTP ${res.status}`);
+        if (data?.error === 'gemini-not-configured') {
+          state.hasGeminiKey = false;
+          updateAiBanner();
+          break;
+        }
+        if (data?.error === 'rate-limited') break;
+      }
+    } catch (err) {
+      ai.failed += 1;
+      ai.error = String(err?.message || err);
+    }
+  }
+
+  ai.running = false;
+  btn.disabled = false;
+  const total = cuts.length;
+  if (ai.done >= total) {
+    setToolStatus(`장면 이미지 ${ai.done}개 생성 완료 — 플레이어에 반영했습니다.`, 1);
+    toast('컷별 AI 장면을 플레이어에 입혔습니다.');
+    setTimeout(() => setToolStatus('', 0), 5000);
+  } else {
+    setToolStatus(`이미지 ${ai.done}/${total} 생성${ai.failed ? ` · 실패 ${ai.failed}` : ''}${ai.error ? ` — ${ai.error}` : ''}`, ai.done / total);
+    if (ai.error) toast(ai.error.slice(0, 120));
+  }
+}
+
+/* ───────────────────── 🎬 영상 파일 내보내기 ───────────────────── */
+
+function recorderMime() {
+  if (typeof window.MediaRecorder === 'undefined') return '';
+  // H.264 MP4 가 최상(아이폰·퀵타임 호환)이지만, 크롬은 `video/mp4` 만 물어보면
+  //  VP9 를 MP4 에 담아 버립니다(아이폰에서 안 열림). 그래서 **코덱까지 지정한 것만** 먼저 믿고,
+  //  안 되면 WebM, 마지막에야 iOS 사파리용 `video/mp4` 를 씁니다.
+  const candidates = [
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4;codecs=avc1',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/mp4',
+    'video/webm',
+  ];
+  for (const mime of candidates) {
+    try {
+      if (MediaRecorder.isTypeSupported(mime)) return mime;
+    } catch {
+      /* 무시 */
+    }
+  }
+  return '';
+}
+
+/** 녹화된 blob 의 실제 컨테이너·코덱을 확인합니다(확장자·안내 문구를 정직하게). */
+async function sniffVideo(blob) {
+  try {
+    const head = new Uint8Array(await blob.slice(0, 65536).arrayBuffer());
+    const ascii = (from, to) => String.fromCharCode(...head.slice(from, to));
+    if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) {
+      const text = ascii(0, Math.min(head.length, 8192));
+      return { container: 'webm', ext: 'webm', codec: /V_VP9/.test(text) ? 'vp9' : /V_VP8/.test(text) ? 'vp8' : 'unknown' };
+    }
+    if (ascii(4, 8) === 'ftyp') {
+      const text = ascii(0, head.length);
+      const codec = /avc1/.test(text) ? 'h264' : /vp09/.test(text) ? 'vp9' : /hvc1|hev1/.test(text) ? 'hevc' : 'unknown';
+      return { container: 'mp4', ext: 'mp4', codec };
+    }
+    return { container: 'unknown', ext: blob.type.includes('mp4') ? 'mp4' : 'webm', codec: 'unknown' };
+  } catch {
+    return { container: 'unknown', ext: blob.type.includes('mp4') ? 'mp4' : 'webm', codec: 'unknown' };
+  }
+}
+
+function loadImage(url) {
+  return new Promise((resolve) => {
+    if (!url) return resolve(null);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+/** 자막을 [강조] 단위로 쪼개 줄바꿈해 그립니다(1080 캔버스 기준). */
+function drawSubtitle(ctx, text, width, y, fontSize, lineHeight) {
+  const src = String(text || '').trim();
+  if (!src) return;
+  ctx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+
+  const tokens = [];
+  const re = /\[([^\]]+)\]|([^\s\[]+)/g;
+  let m;
+  let lastEnd = 0;
+  while ((m = re.exec(src)) !== null) {
+    const gap = src.slice(lastEnd, m.index);
+    if (tokens.length && gap.includes(' ')) tokens.push({ space: true });
+    tokens.push({ text: m[1] || m[2], hl: Boolean(m[1]) });
+    lastEnd = re.lastIndex;
+  }
+  if (!tokens.length) return;
+
+  const maxWidth = width * 0.86;
+  const lines = [];
+  let line = [];
+  let lineWidth = 0;
+  const spaceWidth = ctx.measureText(' ').width;
+  for (const tk of tokens) {
+    if (tk.space) {
+      if (line.length) {
+        line.push({ space: true });
+        lineWidth += spaceWidth;
+      }
+      continue;
+    }
+    const w = ctx.measureText(tk.text).width;
+    if (line.length && lineWidth + w > maxWidth) {
+      lines.push({ tokens: line, width: lineWidth });
+      line = [];
+      lineWidth = 0;
+    }
+    line.push(tk);
+    lineWidth += w;
+  }
+  if (line.length) lines.push({ tokens: line, width: lineWidth });
+
+  const shown = lines.slice(0, 3);
+  const blockHeight = shown.length * lineHeight;
+  const startY = y - blockHeight / 2 + lineHeight / 2;
+  shown.forEach((ln, li) => {
+    let x = (width - ln.width) / 2;
+    const cy = startY + li * lineHeight;
+    for (const tk of ln.tokens) {
+      if (tk.space) {
+        x += spaceWidth;
+        continue;
+      }
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.fillText(tk.text, x + fontSize * 0.035, cy + fontSize * 0.035);
+      ctx.fillStyle = tk.hl ? '#C4B5FD' : '#FFFFFF';
+      ctx.fillText(tk.text, x, cy);
+      x += ctx.measureText(tk.text).width;
+    }
+  });
+}
+
+function drawGradientScene(ctx, cut, W, H) {
+  const g = ctx.createLinearGradient(0, 0, W * 0.6, H);
+  g.addColorStop(0, cut.mood?.from || '#101014');
+  g.addColorStop(1, cut.mood?.to || '#2A3340');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W * 0.7, H * 0.22, 0, W * 0.7, H * 0.22, W * 0.8);
+  glow.addColorStop(0, 'rgba(255,255,255,.16)');
+  glow.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawKenBurnsImage(ctx, img, cut, local, idx, W, H) {
+  const move = CAM_MOVES[idx % CAM_MOVES.length];
+  const scale = move.s0 + (move.s1 - move.s0) * local;
+  const ratio = img.width / img.height;
+  const canvasRatio = W / H;
+  let dw;
+  let dh;
+  if (ratio > canvasRatio) {
+    dh = H * scale;
+    dw = dh * ratio;
+  } else {
+    dw = W * scale;
+    dh = dw / ratio;
+  }
+  const dx = (W - dw) / 2 + (move.x / 100) * W * local;
+  const dy = (H - dh) / 2 + (move.y / 100) * H * local;
+  ctx.drawImage(img, dx, dy, dw, dh);
+}
+
+function drawVideoFrame(ctx, t, images, W, H) {
+  const pkg = state.pkg;
+  const cuts = pkg.cuts;
+  const idx = Math.min(cuts.length - 1, cutIndexAt(t));
+  const cut = cuts[idx];
+  const local = Math.min(1, Math.max(0, (t - cut.start) / Math.max(0.001, cut.end - cut.start)));
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0B1020';
+  ctx.fillRect(0, 0, W, H);
+  if (images[idx]) drawKenBurnsImage(ctx, images[idx], cut, local, idx, W, H);
+  else drawGradientScene(ctx, cut, W, H);
+
+  // 가독성용 그라데이션 + 비네트
+  const bottom = ctx.createLinearGradient(0, H * 0.55, 0, H);
+  bottom.addColorStop(0, 'rgba(0,0,0,0)');
+  bottom.addColorStop(1, 'rgba(0,0,0,.62)');
+  ctx.fillStyle = bottom;
+  ctx.fillRect(0, H * 0.55, W, H * 0.45);
+
+  // 큰 워터마크 단어
+  const bigWord = cut.bigWord || '';
+  if (bigWord) {
+    ctx.save();
+    ctx.globalAlpha = 0.14;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `900 ${Math.round(W * 0.115)}px -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
+    ctx.fillText(bigWord, W / 2, H * 0.26);
+    ctx.restore();
+  }
+
+  // 상단 컷 진행 세그먼트
+  const gap = Math.round(W * 0.008);
+  const segW = (W - gap * (cuts.length + 1)) / cuts.length;
+  cuts.forEach((c, i) => {
+    const p = t <= c.start ? 0 : t >= c.end ? 1 : (t - c.start) / (c.end - c.start);
+    const x = gap + i * (segW + gap);
+    ctx.fillStyle = 'rgba(255,255,255,.28)';
+    ctx.fillRect(x, gap, segW, Math.round(H * 0.004));
+    if (p > 0) {
+      ctx.fillStyle = 'rgba(255,255,255,.95)';
+      ctx.fillRect(x, gap, segW * p, Math.round(H * 0.004));
+    }
+  });
+
+  // 컷 카운터
+  ctx.fillStyle = 'rgba(255,255,255,.72)';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.font = `700 ${Math.round(W * 0.026)}px -apple-system, "Apple SD Gothic Neo", sans-serif`;
+  ctx.fillText(`${idx + 1} / ${cuts.length}`, gap + W * 0.02, gap + H * 0.008);
+  ctx.textAlign = 'right';
+  ctx.fillText(`${t.toFixed(1)}s`, W - gap - W * 0.02, gap + H * 0.008);
+
+  // HOOK 배지
+  if (idx === 0) {
+    const label = 'HOOK';
+    ctx.font = `900 ${Math.round(W * 0.024)}px -apple-system, sans-serif`;
+    const bw = ctx.measureText(label).width + W * 0.03;
+    const bh = H * 0.03;
+    ctx.fillStyle = '#A78BFA';
+    ctx.fillRect(gap + W * 0.02, gap + H * 0.032, bw, bh);
+    ctx.fillStyle = '#0B1020';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, gap + W * 0.032, gap + H * 0.047);
+  }
+
+  // 자막(현재 비트)
+  const beats = cut.beats || [];
+  let text = cut.subtitle;
+  for (let i = 0; i < beats.length; i += 1) {
+    if (t < beats[i].end - 0.0001) {
+      text = beats[i].text;
+      break;
+    }
+    text = beats[beats.length - 1].text;
+  }
+  drawSubtitle(ctx, text, W, H * 0.78, Math.round(W * 0.058), Math.round(W * 0.076));
+}
+
+function slugForFile() {
+  return (state.pkg?.meta?.topic || 'remix').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 28) || 'remix';
+}
+
+async function exportVideo() {
+  if (!state.pkg || exporter.running) return;
+  const mime = recorderMime();
+  if (!mime) {
+    toast('이 브라우저는 영상 녹화(MediaRecorder)를 지원하지 않습니다. 사파리/크롬 최신 버전에서 시도해 주세요.');
+    return;
+  }
+
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const W = isIOS ? 720 : 1080;
+  const H = Math.round((W * 16) / 9);
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    toast('캔버스를 만들지 못했습니다.');
+    return;
+  }
+
+  const btn = $('#downloadVideoBtn');
+  const total = state.pkg.cuts[state.pkg.cuts.length - 1].end;
+  const hasImages = state.pkg.cuts.some((c) => c.imageUrl);
+  if (!hasImages) toast('아직 AI 장면이 없어 그라데이션 장면으로 렌더합니다. 🎨 버튼으로 장면을 먼저 만들면 더 좋습니다.');
+
+  pause();
+  exporter.running = true;
+  exporter.cancelled = false;
+  if (btn) btn.disabled = true;
+  setToolStatus(`장면 이미지 준비 중… (약 ${Math.round(total)}초 실시간 렌더)`, 0);
+
+  try {
+    const images = await Promise.all(state.pkg.cuts.map((c) => loadImage(c.imageUrl)));
+    const stream = canvas.captureStream(30);
+    const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
+    exporter.recorder = recorder;
+    const chunks = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size) chunks.push(e.data);
+    };
+
+    const stopped = new Promise((resolve) => {
+      recorder.onstop = () => resolve();
+    });
+
+    // 첫 프레임을 먼저 그려 두면 녹화 시작이 검은 화면으로 잡히지 않습니다.
+    drawVideoFrame(ctx, 0, images, W, H);
+    recorder.start(250);
+    const started = performance.now();
+
+    await new Promise((resolve) => {
+      const step = (now) => {
+        const t = Math.min(total, (now - started) / 1000);
+        drawVideoFrame(ctx, t, images, W, H);
+        setToolStatus(`영상 렌더링 ${Math.round((t / total) * 100)}% · ${t.toFixed(1)}/${total.toFixed(1)}초`, t / total);
+        if (exporter.cancelled || t >= total) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+
+    recorder.stop();
+    await stopped;
+    exporter.recorder = null;
+
+    const blob = new Blob(chunks, { type: mime.split(';')[0] });
+    if (!blob.size) throw new Error('빈 파일이 만들어졌습니다. 다시 시도해 주세요.');
+    const kind = await sniffVideo(blob);
+    const name = `${slugForFile()}_shorts_${W}x${H}.${kind.ext}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 8000);
+    const codecNote = kind.codec === 'h264' ? 'H.264 MP4' : kind.codec === 'vp9' || kind.codec === 'vp8' ? `${kind.codec.toUpperCase()} WebM` : kind.container.toUpperCase();
+    const warn = kind.container === 'mp4' && kind.codec === 'vp9' ? ' · 일부 아이폰 플레이어에서 안 열릴 수 있습니다' : '';
+    setToolStatus(`${name} · ${(blob.size / 1024 / 1024).toFixed(1)}MB · ${codecNote}${warn} (음성 트랙 없음)`, 1);
+    toast(`영상 파일(${codecNote})을 내려받았습니다. 음성은 포함되지 않습니다.`);
+    setTimeout(() => setToolStatus('', 0), 8000);
+  } catch (err) {
+    setToolStatus('', 0);
+    toast(`영상 렌더 실패: ${String(err?.message || err).slice(0, 100)}`);
+  } finally {
+    exporter.running = false;
+    if (btn) btn.disabled = false;
+  }
 }
 
 /* ───────────────────────── 9:16 플레이어 ───────────────────────── */
@@ -644,6 +1144,13 @@ function bind() {
   });
 
   $$('[data-export]').forEach((btn) => btn.addEventListener('click', () => doExport(btn.dataset.export)));
+
+  $('#genImagesBtn')?.addEventListener('click', generateCutImages);
+  $('#downloadVideoBtn')?.addEventListener('click', exportVideo);
+  $('#addKeyHelp')?.addEventListener('click', () => {
+    copyText('Vercel → Projects → shorts-studio → Settings → Environment Variables → GEMINI_API_KEY 추가 후 Redeploy', '안내를 복사했습니다.');
+  });
+  loadHealth();
 
   document.addEventListener('keydown', (e) => {
     if (!state.pkg || !state.playerOpen) return;

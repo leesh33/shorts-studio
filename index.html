@@ -136,12 +136,13 @@
 
       <!-- Result -->
       <section id="resultSection" class="hidden max-w-5xl mx-auto mt-14 animate-fade-up">
-        <div class="flex items-center gap-3 mb-7">
+        <div class="flex flex-wrap items-center gap-3 mb-7">
           <div class="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center text-emerald-400">✓</div>
           <div>
             <h3 class="text-xl font-bold">Analysis Complete</h3>
             <p class="text-xs text-slate-500" id="resultSub">AI 벤치마킹 및 대본 생성이 완료되었습니다.</p>
           </div>
+          <span id="modeBadge" class="ml-auto text-[10px] font-black tracking-wider px-2.5 py-1 rounded-full border text-slate-400 border-white/10 bg-white/5">—</span>
         </div>
 
         <!-- DNA -->
@@ -253,6 +254,34 @@
               <!-- side -->
               <div class="min-w-0">
                 <div class="rounded-2xl bg-[#0B1020] border border-white/10 p-4">
+                  <p class="text-xs font-bold text-slate-300 mb-3 tracking-wide">AI SCENE &amp; VIDEO</p>
+                  <div class="grid grid-cols-1 gap-2">
+                    <button id="genImagesBtn" type="button" class="text-xs font-bold py-3 rounded-xl bg-gradient-to-r from-violet-600/80 to-blue-600/80 border border-violet-400/20 text-white hover:opacity-90 disabled:opacity-50 transition">
+                      🎨 컷별 AI 이미지 생성
+                    </button>
+                    <button id="downloadVideoBtn" type="button" class="text-xs font-bold py-3 rounded-xl bg-white/5 border border-white/10 text-slate-200 hover:border-violet-500/40 disabled:opacity-50 transition">
+                      🎬 영상 파일 다운로드
+                    </button>
+                  </div>
+                  <div id="aiBanner" class="hidden mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-[11px] leading-relaxed text-amber-200">
+                    <b class="text-amber-100">GEMINI_API_KEY 가 아직 없습니다.</b>
+                    지금은 로컬 엔진 대본 + 그라데이션 장면으로 동작합니다.
+                    Vercel → Project → Settings → Environment Variables 에 <code class="text-amber-100">GEMINI_API_KEY</code> 를 추가하고 Redeploy 하면 컷별 실제 장면과 Gemini 대본이 켜집니다.
+                    <button id="addKeyHelp" type="button" class="mt-2 block underline decoration-dotted text-amber-300">안내 문구 복사</button>
+                  </div>
+                  <div id="toolStatus" class="hidden mt-3">
+                    <p id="toolStatusText" class="text-[11px] text-slate-400 mb-1.5"></p>
+                    <div class="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                      <div id="toolStatusFill" class="h-full w-0 bg-gradient-to-r from-violet-500 to-blue-400 transition-all"></div>
+                    </div>
+                  </div>
+                  <p class="mt-3 text-[10px] text-slate-600 leading-relaxed">
+                    영상은 브라우저에서 실시간으로 렌더해 내려받습니다 — 켄번즈 장면 + 자막 + 진행바, 음성 트랙 없음.
+                    크롬은 WebM(VP9), 아이폰 사파리는 MP4(H.264)로 저장됩니다.
+                  </p>
+                </div>
+
+                <div class="mt-4 rounded-2xl bg-[#0B1020] border border-white/10 p-4">
                   <p class="text-xs font-bold text-slate-300 mb-3 tracking-wide">EXPORT</p>
                   <div class="grid grid-cols-2 gap-2">
                     <button type="button" data-export="script" class="text-xs font-semibold py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-200 hover:border-violet-500/40 transition">📄 스크립트 복사</button>
@@ -279,7 +308,7 @@
     </div>
 
     <!-- Toast -->
-    <div id="toast" class="fixed bottom-8 left-1/2 -translate-x-1/2 translate-y-4 opacity-0 pointer-events-none bg-[#252D42] border border-white/10 px-6 py-4 rounded-xl shadow-2xl text-sm text-white z-50 transition-all duration-200">
+    <div id="toast" class="fixed bottom-8 left-1/2 -translate-x-1/2 translate-y-4 opacity-0 pointer-events-none bg-[#252D42] border border-white/10 px-6 py-4 rounded-xl shadow-2xl text-sm text-white z-50 transition-all duration-200 w-max max-w-[88vw] text-center leading-relaxed">
       <span id="toastText"></span>
     </div>
 

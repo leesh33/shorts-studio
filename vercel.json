@@ -3,7 +3,11 @@
   "framework": null,
   "buildCommand": null,
   "outputDirectory": null,
-  "functions": { "api/*.js": { "maxDuration": 30 } },
+  "functions": {
+    "api/analyze-and-generate.js": { "maxDuration": 45 },
+    "api/generate-image.js": { "maxDuration": 60 },
+    "api/health.js": { "maxDuration": 10 }
+  },
   "headers": [
     { "source": "/api/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
   ]
