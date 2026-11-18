@@ -401,13 +401,19 @@ function paintSubtitle(text, animate) {
       while ((m = re.exec(line)) !== null) parts.push({ text: m[1] || m[2], hl: Boolean(m[1]) });
       let html = '';
       parts.forEach((part, i) => {
-        const delay = animate ? ` style="animation-delay:${i * 32}ms"` : '';
+        
         const glue = i > 0 && !/^[,.\u00b7!?~)\]…]/.test(part.text) ? ' ' : '';
-        html += `${glue}<span class="inline-block animate-pop-in ${part.hl ? 'text-violet-300' : ''}"${delay}>${escapeHtml(part.text)}</span>`;
+        html += `${glue}<span class="${part.hl ? 'text-violet-300' : ''}">${escapeHtml(part.text)}</span>`;
       });
       return `<span class="block">${html}</span>`;
     })
     .join('');
+  // 비트가 바뀔 때 자막 블록 전체가 살짝 떠오릅니다 (단어별 애니메이션은 줄바꿈에서 겹쳐 보였습니다).
+  el.classList.remove('animate-pop-in');
+  if (animate) {
+    void el.offsetWidth;
+    el.classList.add('animate-pop-in');
+  }
 }
 
 function wrapLines(text, maxChars) {
