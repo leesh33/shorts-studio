@@ -28,6 +28,8 @@ const state = {
   /** 영상 길이 — 화면 선택기(15/30/45/60초)의 값. 컷 수도 함께 정해집니다. */
   lengthSec: 30,
   cutCount: 8,
+  /** 내레이션 때문에 영상이 길어졌다는 안내를 한 번만 보여 줍니다. */
+  lengthNoticeShown: false,
 };
 
 /** 화면 토글과 요청 본문이 같은 이름을 쓰도록 한 곳에 모읍니다(서버 lib/visual-style.js 와 짝). */
@@ -169,6 +171,7 @@ async function generate(event) {
   }
 
   setLoading(true);
+  state.lengthNoticeShown = false;
   startProgress();
   closePlayer();
   editQueue.forEach((timer) => clearTimeout(timer));
@@ -614,7 +617,7 @@ function refreshImageBadgeFromPkg() {
   const mix = photos ? `📷 실사 ${photos}컷${photos < made ? ` · 🎨 AI ${made - photos}컷` : ''}` : '무료 AI';
   if (made === total) paintImageBadge(`장면 완료 · ${made}/${total} (${mix})`, 'ok');
   else if (made > 0) paintImageBadge(`장면 · ${made}/${total} 완료 (${mix})`, 'ok');
-  else paintImageBadge('무료 AI 이미지 · 0/' + total + ' 준비됨', 'ok');
+  else paintImageBadge(state.visualStyle === 'real' ? `📷 실제 사진 · 0/${total} 준비됨` : `무료 AI 이미지 · 0/${total} 준비됨`, 'ok');
 }
 
 function sleep(ms) {
@@ -1047,7 +1050,8 @@ function retimeToNarration() {
   cuts.forEach((cut) => {
     const scriptDur = Math.max(1.2, cut.end - cut.start);
     const buffer = narrationBuffer(cut);
-    const target = buffer ? Math.min(14, Math.max(scriptDur, buffer.duration + 0.3)) : scriptDur;
+    // 재생 배속으로 1.2배까지는 자연스럽게 담깁니다 — 그 뒤에도 남으면 컷을 늘립니다.
+    const target = buffer ? Math.min(14, Math.max(scriptDur, buffer.duration / 1.2 + 0.25)) : scriptDur;
     if (Math.abs(target - scriptDur) > 0.05) changed = true;
     cut.start = Number(cursor.toFixed(2));
     cut.end = Number((cursor + target).toFixed(2));
@@ -1062,6 +1066,11 @@ function retimeToNarration() {
   const meta = $('#scriptMeta');
   if (meta) meta.textContent = `총 ${Math.round(cursor)}초 · 컷당 ${(cursor / cuts.length).toFixed(1)}초 · ${styleLabel()} · 내레이션에 맞춘 길이`;
   paintCardTimes();
+  const wanted = Number(state.pkg?.meta?.length) || 0;
+  if (wanted && cursor > wanted * 1.15 && !state.lengthNoticeShown) {
+    state.lengthNoticeShown = true;
+    toast(`내레이션 길이에 맞춰 영상이 ${Math.round(cursor)}초로 늘었습니다 — 대본을 줄이면 ${wanted}초에 가깝게 맞출 수 있어요.`);
+  }
   return true;
 }
 
