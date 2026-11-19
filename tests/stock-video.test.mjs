@@ -271,6 +271,8 @@ test('matchClip: \'observation deck\' 에 카멜레온(observation) 클립이 �
   const terms = queryTerms({ query: 'observation deck', kind: 'generic_scene' });
   assert.deepEqual(terms.required, ['deck']);
   assert.equal(matchClip({ tags: ['lizard', 'reptile', 'creature', 'observation'], title: 'lizard, reptile, creature, observation' }, terms).level, 0);
+  // 해변 'deck' 처럼 흔한 말만 맞는 클립도 버립니다.
+  assert.equal(matchClip({ tags: ['beach', 'chairs', 'deck', 'ocean'], title: 'beach, chairs, deck, ocean' }, terms).level, 0);
   assert.ok(matchClip({ tags: ['observation deck', 'skyline', 'city'], title: 'observation deck, skyline' }, terms).level >= 1);
 });
 
