@@ -267,6 +267,13 @@ test('matchClip: 고유명사가 카드에 보이는 태그에 없으면(뒤 태
   assert.ok(matchClip(shown, terms).level >= 1);
 });
 
+test('matchClip: \'observation deck\' 에 카멜레온(observation) 클립이 붙지 않는다', () => {
+  const terms = queryTerms({ query: 'observation deck', kind: 'generic_scene' });
+  assert.deepEqual(terms.required, ['deck']);
+  assert.equal(matchClip({ tags: ['lizard', 'reptile', 'creature', 'observation'], title: 'lizard, reptile, creature, observation' }, terms).level, 0);
+  assert.ok(matchClip({ tags: ['observation deck', 'skyline', 'city'], title: 'observation deck, skyline' }, terms).level >= 1);
+});
+
 test('bestMatch: 한국어 제목과 영어 태그를 함께 본다', () => {
   const termsList = videoTermSets({ ko: '롯데월드타워', en: 'Lotte World Tower', kind: 'specific_landmark' });
   assert.equal(bestMatch({ tags: [], title: '롯데월드타워 야경' }, termsList).level, 2);
