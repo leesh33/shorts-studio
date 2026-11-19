@@ -65,7 +65,7 @@ export default async function handler(req, res) {
       hasPixabayKey,
       hasPexelsKey,
       providers,
-      relevance: 'strict-tags-1',
+      relevance: 'strict-tags-2',
       note: hasPixabayKey
         ? 'PIXABAY_API_KEY 가 설정되어 있어 Pixabay 스톡 영상을 1순위로 찾습니다. 없으면 위키미디어 커먼즈 영상으로 넘어갑니다.'
         : hasPexelsKey
