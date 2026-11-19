@@ -226,6 +226,17 @@ test('matchClip: 요청한 소재는 막지 않는다(강아지·요트)', () =>
   assert.ok(matchClip({ tags: ['yacht', 'harbor', 'sea'], title: 'yacht, harbor' }, yacht).level >= 1);
 });
 
+test('matchClip: 여러 단어 시각어는 첫 피사체만 맞아도 그 장면이다', () => {
+  // Gemini 는 "dog looking owner" 처럼 3단어를 줍니다 — 태그에 dog 만 있어도 강아지 장면입니다.
+  const terms = queryTerms({ query: 'dog looking owner', kind: 'generic_scene' });
+  assert.equal(matchClip({ tags: ['dog', 'puppy', 'pet'], title: 'dog, puppy' }, terms).level, 1);
+  assert.equal(matchClip({ tags: ['cat', 'kitten'], title: 'cat' }, terms).level, 0);
+  // 첫 단어가 배경어(city)면 그것만으로는 믿지 않습니다.
+  const city = queryTerms({ query: 'city night walk', kind: 'generic_scene' });
+  assert.equal(matchClip({ tags: ['mountain', 'forest'], title: 'mountain' }, city).level, 0);
+  assert.ok(matchClip({ tags: ['city', 'night', 'lights'], title: 'city night' }, city).level >= 1);
+});
+
 test('bestMatch: 한국어 제목과 영어 태그를 함께 본다', () => {
   const termsList = videoTermSets({ ko: '롯데월드타워', en: 'Lotte World Tower', kind: 'specific_landmark' });
   assert.equal(bestMatch({ tags: [], title: '롯데월드타워 야경' }, termsList).level, 2);
