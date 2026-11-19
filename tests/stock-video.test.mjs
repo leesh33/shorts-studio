@@ -10,12 +10,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ALLOWED_VIDEO_HOSTS,
+  bestMatch,
   findStockVideo,
   isAllowedVideoUrl,
+  matchClip,
   pickPexelsFile,
   pickPixabayFile,
   probeVideo,
   proxiedVideoUrl,
+  queryTerms,
   searchCommonsVideos,
   searchPixabayVideos,
   videoCredit,
@@ -23,6 +26,7 @@ import {
   videoFromPexels,
   videoFromPixabay,
   videoSearchPlan,
+  videoTermSets,
 } from '../lib/stock-video.js';
 import findVideoHandler from '../api/find-video.js';
 import healthHandler from '../api/health.js';
@@ -45,12 +49,50 @@ const PIXABAY_HIT = {
 const PIXABAY_PORTRAIT = {
   ...PIXABAY_HIT,
   id: 900,
-  tags: 'vertical, phone, street',
+  tags: 'seoul, city, night, vertical',
   videos: {
     large: { url: 'https://cdn.pixabay.com/video/2023/01/01/900_large.mp4', width: 2160, height: 3840, size: 60_000_000 },
     medium: { url: 'https://cdn.pixabay.com/video/2023/01/01/900_medium.mp4', width: 1080, height: 1920, size: 20_000_000, thumbnail: 'https://cdn.pixabay.com/video/2023/01/01/900_medium.jpg' },
     small: { url: 'https://cdn.pixabay.com/video/2023/01/01/900_small.mp4', width: 720, height: 1280, size: 9_000_000 },
     tiny: { url: 'https://cdn.pixabay.com/video/2023/01/01/900_tiny.mp4', width: 540, height: 960, size: 3_000_000 },
+  },
+};
+
+/** 주제와 무관한 클립 — '롯데월드타워의 비밀' 에 실제로 붙었던 종류(횡단보도·요트·항구) */
+const PIXABAY_CROSSWALK = {
+  ...PIXABAY_HIT,
+  id: 2001,
+  tags: 'road, traffic, crosswalk, cars',
+  videos: {
+    medium: { url: 'https://cdn.pixabay.com/video/2024/02/02/2001_medium.mp4', width: 1080, height: 1920, size: 18_000_000 },
+  },
+};
+
+const PIXABAY_YACHT = {
+  ...PIXABAY_HIT,
+  id: 2002,
+  tags: 'harbor, yacht, sea, sailboat',
+  videos: {
+    medium: { url: 'https://cdn.pixabay.com/video/2024/02/02/2002_medium.mp4', width: 1080, height: 1920, size: 18_000_000 },
+  },
+};
+
+/** 진짜 롯데타워 클립(있을 때) — 태그에 고유명사가 있습니다. */
+const PIXABAY_LOTTE = {
+  ...PIXABAY_HIT,
+  id: 2003,
+  tags: 'lotte world tower, seoul, skyscraper, night',
+  videos: {
+    medium: { url: 'https://cdn.pixabay.com/video/2024/02/02/2003_medium.mp4', width: 1080, height: 1920, size: 18_000_000 },
+  },
+};
+
+const PIXABAY_DOG = {
+  ...PIXABAY_HIT,
+  id: 2004,
+  tags: 'dog, puppy, pet, cute',
+  videos: {
+    medium: { url: 'https://cdn.pixabay.com/video/2024/02/02/2004_medium.mp4', width: 1080, height: 1920, size: 18_000_000 },
   },
 };
 
@@ -135,6 +177,60 @@ test('검색 순서: Pixabay 키 → Pexels 키 → 위키미디어 커먼즈', 
   // 같은 검색어는 한 번만 묻습니다.
   const plan = videoSearchPlan({ hasKey: false, keywords: { ko: 'Seoul', en: 'Seoul', fallback: 'Seoul' } });
   assert.equal(plan.length, 1);
+});
+
+test('검색 순서: Pixabay·Pexels 는 영어 검색어로만 묻는다(한국어 태그 색인 없음)', () => {
+  const plan = videoSearchPlan({ hasKey: true, hasPexelsKey: true, keywords: { ko: '롯데월드타워', en: '', videoEn: 'skyscraper night' } });
+  const pixabay = plan.find((p) => p.provider === 'pixabay');
+  const pexels = plan.find((p) => p.provider === 'pexels');
+  assert.equal(pixabay.query, 'skyscraper night');
+  assert.equal(pexels.query, 'skyscraper night');
+  // 한국어 검색어밖에 없으면 Pixabay 를 부르지 않습니다(비슷한 분위기 클립이 오기 때문).
+  const koOnly = videoSearchPlan({ hasKey: true, hasPexelsKey: true, keywords: { ko: '롯데월드타워' } });
+  assert.deepEqual(koOnly.map((p) => p.provider), ['wikimedia-commons']);
+});
+
+test('queryTerms: 고유명사 랜드마크는 고유명사 토큰을, 일반 장면은 피사체 토큰을 요구한다', () => {
+  const tower = queryTerms({ query: 'Lotte World Tower', kind: 'specific_landmark' });
+  assert.deepEqual(tower.required, ['lotte', 'world', 'tower']);
+  assert.deepEqual(tower.distinctive, ['lotte']); // tower·world 는 흔한 말
+
+  const generic = queryTerms({ query: 'skyscraper night', kind: 'generic_scene' });
+  assert.deepEqual(generic.required, ['skyscraper']); // night 는 촬영 수식어
+  assert.deepEqual(generic.distinctive, []); // skyscraper 는 흔한 장소 명사(고유명사 판정용)
+
+  const dog = queryTerms({ query: 'dog owners', kind: 'generic_scene' });
+  assert.deepEqual(dog.required, ['dog', 'owner']);
+});
+
+test('matchClip: 무관한 태그는 0 — 횡단보도·요트·사진작가', () => {
+  const terms = queryTerms({ query: 'Lotte World Tower', kind: 'specific_landmark' });
+  assert.equal(matchClip({ tags: ['road', 'traffic', 'crosswalk', 'cars'], title: 'road, traffic, crosswalk' }, terms).level, 0);
+  assert.equal(matchClip({ tags: ['harbor', 'yacht', 'sea'], title: 'harbor, yacht' }, terms).level, 0);
+  assert.equal(matchClip({ tags: ['photographer', 'camera', 'people'], title: 'photographer' }, terms).level, 0);
+  // 진짜 롯데타워 클립은 통과합니다.
+  assert.equal(matchClip({ tags: ['lotte world tower', 'seoul', 'skyscraper'], title: 'lotte world tower' }, terms).level, 2);
+
+  const deck = queryTerms({ query: 'observation deck', kind: 'generic_scene' });
+  assert.equal(matchClip({ tags: ['city', 'night', 'lights'], title: 'city night' }, deck).level, 0);
+  assert.equal(matchClip({ tags: ['observation deck', 'skyline'], title: 'observation deck' }, deck).level, 2);
+});
+
+test('matchClip: 요청한 소재는 막지 않는다(강아지·요트)', () => {
+  const dog = queryTerms({ query: 'dog', kind: 'generic_scene' });
+  assert.equal(matchClip({ tags: ['dog', 'puppy', 'pet'], title: 'dog, puppy' }, dog).level, 2);
+  assert.equal(matchClip({ tags: ['cat', 'kitten'], title: 'cat' }, dog).level, 0);
+
+  // 요트가 주제면 요트 클립을 씁니다.
+  const yacht = queryTerms({ query: 'yacht harbor', kind: 'generic_scene' });
+  assert.ok(matchClip({ tags: ['yacht', 'harbor', 'sea'], title: 'yacht, harbor' }, yacht).level >= 1);
+});
+
+test('bestMatch: 한국어 제목과 영어 태그를 함께 본다', () => {
+  const termsList = videoTermSets({ ko: '롯데월드타워', en: 'Lotte World Tower', kind: 'specific_landmark' });
+  assert.equal(bestMatch({ tags: [], title: '롯데월드타워 야경' }, termsList).level, 2);
+  assert.equal(bestMatch({ tags: ['lotte world tower', 'seoul'], title: '' }, termsList).level, 2);
+  assert.equal(bestMatch({ tags: ['crosswalk', 'traffic'], title: '' }, termsList).level, 0);
 });
 
 test('프록시 허용 호스트 — Pixabay·Pexels·위키미디어 CDN 만', () => {
@@ -287,6 +383,93 @@ test('findStockVideo — 키가 하나도 없으면 커먼즈에서 찾는다', 
   assert.equal(found.provider, 'wikimedia-commons');
   assert.equal(seen.some((u) => u.includes('pixabay') || u.includes('pexels')), false);
   assert.equal(found.credit, 'Seoul, central street · CC BY-SA 4.0 · Виктор Пинчук');
+});
+
+test('findStockVideo — 무관한 Pixabay 클립(횡단보도·요트)은 쓰지 않고 no-relevant-video', async () => {
+  // 사용자 신고 그대로: '롯데월드타워' 로 물었는데 횡단보도·요트 클립이 붙었습니다.
+  const found = await findStockVideo({
+    keywords: { ko: '롯데월드타워', en: 'Lotte World Tower', videoEn: 'Lotte World Tower', kind: 'specific_landmark' },
+    index: 0,
+    apiKey: 'test-key',
+    fetchImpl: async (url) => {
+      if (String(url).startsWith('https://pixabay.com/api/videos/')) {
+        return jsonResponse({ total: 2, totalHits: 2, hits: [PIXABAY_CROSSWALK, PIXABAY_YACHT] });
+      }
+      if (String(url).startsWith('https://commons.wikimedia.org/')) return jsonResponse({ query: { pages: [] } });
+      return videoResponse();
+    },
+  });
+  assert.equal(found.ok, false);
+  assert.equal(found.reason, 'no-relevant-video');
+  // 왜 버렸는지 검색 기록에 남습니다 — 화면은 이걸 보고 실제 사진으로 내려갑니다.
+  assert.ok(found.attempts.some((a) => a.reason === 'no-relevant-clip' && a.provider === 'pixabay'));
+});
+
+test('findStockVideo — 무관한 클립 사이에 진짜 클립이 있으면 그것만 고른다', async () => {
+  const found = await findStockVideo({
+    keywords: { ko: '롯데월드타워', en: 'Lotte World Tower', videoEn: 'Lotte World Tower', kind: 'specific_landmark' },
+    index: 0,
+    apiKey: 'test-key',
+    fetchImpl: async (url) => {
+      if (String(url).startsWith('https://pixabay.com/api/videos/')) {
+        return jsonResponse({ total: 3, totalHits: 3, hits: [PIXABAY_CROSSWALK, PIXABAY_YACHT, PIXABAY_LOTTE] });
+      }
+      return videoResponse();
+    },
+  });
+  assert.equal(found.ok, true);
+  assert.equal(found.videoId, 'pixabay:2003');
+  assert.equal(found.relevance, 2);
+  assert.match(found.query, /Lotte World Tower/);
+});
+
+test('findStockVideo — 강아지 주제는 진짜 강아지 클립을 고른다', async () => {
+  const found = await findStockVideo({
+    keywords: { ko: '강아지', en: 'dog', videoEn: 'dog love', kind: 'generic_scene' },
+    index: 0,
+    apiKey: 'test-key',
+    fetchImpl: async (url) => {
+      if (String(url).startsWith('https://pixabay.com/api/videos/')) {
+        return jsonResponse({ total: 2, totalHits: 2, hits: [PIXABAY_CROSSWALK, PIXABAY_DOG] });
+      }
+      return videoResponse();
+    },
+  });
+  assert.equal(found.ok, true);
+  assert.equal(found.videoId, 'pixabay:2004');
+  assert.match(String(found.title), /dog/);
+});
+
+test('findStockVideo — 고유명사가 안 맞는 클립만 있으면 no-relevant-video', async () => {
+  // Pixabay 가 'city, skyline, night' 클립만 준 경우 — '롯데월드타워' 컷에는 쓰지 않습니다.
+  const saja = { ...PIXABAY_HIT, id: 2005, tags: 'city, skyline, night' };
+  const found = await findStockVideo({
+    keywords: { ko: '롯데월드타워', en: 'Lotte World Tower', videoEn: 'Lotte World Tower', kind: 'specific_landmark' },
+    index: 3,
+    apiKey: 'test-key',
+    fetchImpl: async (url) => {
+      if (String(url).startsWith('https://pixabay.com/api/videos/')) return jsonResponse({ total: 1, totalHits: 1, hits: [saja] });
+      if (String(url).startsWith('https://commons.wikimedia.org/')) return jsonResponse({ query: { pages: [] } });
+      return videoResponse();
+    },
+  });
+  assert.equal(found.ok, false);
+  assert.equal(found.reason, 'no-relevant-video');
+});
+
+test('findStockVideo — 일반 장면(generic_scene)은 시각어가 맞으면 쓴다', async () => {
+  const skyline = { ...PIXABAY_HIT, id: 2006, tags: 'skyscraper, city, night, lights' };
+  const found = await findStockVideo({
+    keywords: { ko: '서울 스카이라인', en: 'Seoul skyline', videoEn: 'skyscraper night', kind: 'generic_scene' },
+    index: 0,
+    apiKey: 'test-key',
+    fetchImpl: async (url) => {
+      if (String(url).startsWith('https://pixabay.com/api/videos/')) return jsonResponse({ total: 1, totalHits: 1, hits: [skyline] });
+      return videoResponse();
+    },
+  });
+  assert.equal(found.ok, true);
+  assert.equal(found.videoId, 'pixabay:2006');
 });
 
 test('findStockVideo — 클립이 없으면 no-video 로 정직하게 실패', async () => {
@@ -470,6 +653,66 @@ test('POST /api/find-video — 클립이 없으면 404 no-video (화면이 사�
         assert.equal(res.statusCode, 404);
         assert.equal(body.ok, false);
         assert.equal(body.error, 'no-video');
+      },
+    );
+  });
+});
+
+test('POST /api/find-video — 무관한 클립만 있으면 404 no-relevant-video (강제로 넣지 않음)', async () => {
+  await withEnv({ PIXABAY_API_KEY: 'test-pixabay-key', PEXELS_API_KEY: null }, async () => {
+    await withFetch(
+      async (url) => {
+        if (String(url).startsWith('https://pixabay.com/api/videos/')) {
+          // 영어 검색어로 묻는지 함께 검증합니다(한국어로 물으면 무관한 클립이 옵니다).
+          assert.equal(new URL(String(url)).searchParams.get('q'), 'Lotte World Tower');
+          assert.equal(new URL(String(url)).searchParams.get('lang'), 'en');
+          return jsonResponse({ total: 2, totalHits: 2, hits: [PIXABAY_CROSSWALK, PIXABAY_YACHT] });
+        }
+        if (String(url).startsWith('https://commons.wikimedia.org/')) return jsonResponse({ query: { pages: [] } });
+        return videoResponse();
+      },
+      async () => {
+        const res = mockRes();
+        await findVideoHandler(
+          mockReq({
+            method: 'POST',
+            body: { photoKo: '롯데월드타워', photoEn: 'Lotte World Tower', videoEn: 'Lotte World Tower', videoKind: 'specific_landmark', cutIndex: 1 },
+          }),
+          res,
+        );
+        const body = JSON.parse(res.body);
+        assert.equal(res.statusCode, 404);
+        assert.equal(body.ok, false);
+        assert.equal(body.error, 'no-relevant-video');
+        assert.match(body.message, /실제 사진/);
+        assert.equal(body.videoUrl, undefined);
+      },
+    );
+  });
+});
+
+test('POST /api/find-video — videoEn·videoKind 로 검색어와 랜드마크 여부를 넘길 수 있다', async () => {
+  await withEnv({ PIXABAY_API_KEY: 'test-pixabay-key', PEXELS_API_KEY: null }, async () => {
+    await withFetch(
+      async (url) => {
+        if (String(url).startsWith('https://pixabay.com/api/videos/')) {
+          assert.equal(new URL(String(url)).searchParams.get('q'), 'skyscraper night');
+          return jsonResponse({ total: 1, totalHits: 1, hits: [{ ...PIXABAY_HIT, id: 3001, tags: 'skyscraper, city, night' }] });
+        }
+        return videoResponse();
+      },
+      async () => {
+        const res = mockRes();
+        await findVideoHandler(
+          mockReq({ method: 'POST', body: { photoKo: '서울 야경', photoEn: 'Seoul night skyline', videoEn: 'skyscraper night', videoKind: 'generic_scene', cutIndex: 0 } }),
+          res,
+        );
+        const body = JSON.parse(res.body);
+        assert.equal(res.statusCode, 200);
+        assert.equal(body.kind, 'video');
+        assert.equal(body.query, 'skyscraper night');
+        assert.equal(body.videoKind, 'generic_scene');
+        assert.ok(body.relevance >= 1);
       },
     );
   });

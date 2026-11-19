@@ -5,6 +5,7 @@ import {
   buildScriptBody,
   parseScriptJson,
   normalizeAiScript,
+  normalizeVideoKind,
   mergeScriptIntoPackage,
   mergeDnaIntoBlueprint,
   ensureImagePrompt,
@@ -159,4 +160,46 @@ test('mergeDnaIntoBlueprint: Gemini 분석이 DNA 카드 모양으로 들어간�
   assert.equal(merged.ai.videoWatched, true);
   assert.ok(merged.evidence[0].includes('영상'));
   assert.ok(merged.evidence.length >= 3);
+});
+
+test('buildScriptPrompt: 영상 모드는 컷마다 photoKo·photoEn·videoEn·videoKind 를 요구한다', () => {
+  const prompt = buildScriptPrompt({ topic: '롯데월드타워의 비밀', style: 'video', targetLen: 30, cutCount: 8 });
+  assert.match(prompt, /videoEn/);
+  assert.match(prompt, /videoKind/);
+  assert.match(prompt, /specific_landmark/);
+  assert.match(prompt, /generic_scene/);
+  assert.match(prompt, /photoKo/);
+  // 무관한 대체어를 쓰지 말라고 명시해야 합니다.
+  assert.match(prompt, /"city", "street"/);
+  // 실제 사진 모드에는 영상 전용 필드를 요구하지 않습니다.
+  const realPrompt = buildScriptPrompt({ topic: '롯데월드타워의 비밀', style: 'real', targetLen: 30, cutCount: 8 });
+  assert.match(realPrompt, /photoKo/);
+  assert.doesNotMatch(realPrompt, /"videoEn"/);
+});
+
+test('normalizeAiScript: videoEn·videoKind 를 컷에 실어 보낸다', () => {
+  const ai = sampleAi(7);
+  ai.cuts[0].photoKo = '롯데월드타워';
+  ai.cuts[0].photoEn = 'Lotte World Tower';
+  ai.cuts[0].videoEn = 'Lotte World Tower';
+  ai.cuts[0].videoKind = 'specific_landmark';
+  ai.cuts[1].photoKo = '롯데월드타워';
+  ai.cuts[1].photoEn = 'Lotte World Tower';
+  ai.cuts[1].videoEn = 'glass elevator';
+  ai.cuts[1].videoKind = 'generic_scene';
+  const normalized = normalizeAiScript(ai, { topic: '롯데월드타워의 비밀', targetLen: 36, cutCount: 7 });
+  assert.equal(normalized.ok, true);
+  assert.equal(normalized.cuts[0].videoEn, 'Lotte World Tower');
+  assert.equal(normalized.cuts[0].videoKind, 'specific_landmark');
+  assert.equal(normalized.cuts[1].videoEn, 'glass elevator');
+  assert.equal(normalized.cuts[1].videoKind, 'generic_scene');
+});
+
+test('normalizeVideoKind: 표기가 없으면 영어 검색어로 랜드마크를 추정한다', () => {
+  assert.equal(normalizeVideoKind('specific_landmark'), 'specific_landmark');
+  assert.equal(normalizeVideoKind('특정 장소'), 'specific_landmark');
+  assert.equal(normalizeVideoKind('generic_scene'), 'generic_scene');
+  assert.equal(normalizeVideoKind('', { videoEn: 'Lotte World Tower', photoEn: 'Lotte World Tower' }), 'specific_landmark');
+  assert.equal(normalizeVideoKind('', { videoEn: 'dog', photoEn: 'Lotte World Tower' }), '');
+  assert.equal(normalizeVideoKind(''), '');
 });

@@ -2,21 +2,23 @@
  * api/find-video.js — Vercel Serverless Function
  * ─────────────────────────────────────────────────────────────
  * POST /api/find-video
- *   body: { photoKo?, photoEn?, keyword?, fallbackPhoto?, fallbackPhotoEn?, cutIndex?, exclude?[] }
+ *   body: { photoKo?, photoEn?, videoEn?, videoKind?, keyword?, fallbackPhoto?, fallbackPhotoEn?, cutIndex?, exclude?[] }
  *   응답:  { ok: true, kind:'video', videoUrl:'/api/video-proxy?u=…', posterUrl?, provider, providerLabel,
- *           videoId, title, page, license, artist, duration, width, height, credit, attempts, ms }
- *         | { ok:false, error:'no-video', message, attempts }   ← 화면이 실제 사진 → AI 로 폴백
+ *           videoId, title, page, license, artist, duration, width, height, credit, query, relevance, attempts, ms }
+ *         | { ok:false, error:'no-video'|'no-relevant-video', message, attempts }
+ *           ← 화면이 실제 사진(켄번즈) → AI 로 폴백합니다. 무관한 클립은 일부러 돌려주지 않습니다.
  *
  * 순서 (lib/stock-video.js)
- *   ① PIXABAY_API_KEY 가 있으면 Pixabay Videos(세로·HD mp4)부터
+ *   ① PIXABAY_API_KEY 가 있으면 Pixabay Videos — **영어 검색어**로 묻고, 돌려받은 tags 와
+ *      컷의 핵심 피사체가 겹치지 않으면 버립니다(무관한 횡단보도·요트 클립 차단).
  *   ② PEXELS_API_KEY 가 있으면 Pexels Videos (Pexels 는 신규 키 발급을 잠시 멈춰 두었습니다)
- *   ③ 키가 없거나 0건이면 위키미디어 커먼즈 영상(filetype:video, webm 트랜스코드)
- *   ④ 그래도 없으면 no-video — 컷은 '실제 사진(켄번즈) → 무료 AI' 로 채웁니다.
+ *   ③ 위키미디어 커먼즈 영상(filetype:video, webm 트랜스코드) — 한국어 지명 검색이 됩니다.
+ *   ④ 그래도 **주제에 맞는** 클립이 없으면 no-relevant-video — 컷은 '실제 사진(켄번즈) → 무료 AI' 로 채웁니다.
  *
  * · 영상 바이트는 응답에 담지 않습니다(수 MB). 같은 출처 프록시 주소만 돌려줍니다.
  * · 키 값은 쿼리/헤더로만 나가고 응답·로그에 담지 않습니다.
  *
- * GET /api/find-video → { ok, hasPixabayKey, hasPexelsKey, providers, mediaHosts }  (키 값은 절대 포함하지 않음)
+ * GET /api/find-video → { ok, hasPixabayKey, hasPexelsKey, providers, relevance, mediaHosts }  (키 값은 절대 포함하지 않음)
  */
 import { findStockVideo, videoCredit } from '../lib/stock-video.js';
 
@@ -63,6 +65,7 @@ export default async function handler(req, res) {
       hasPixabayKey,
       hasPexelsKey,
       providers,
+      relevance: 'strict-tags-1',
       note: hasPixabayKey
         ? 'PIXABAY_API_KEY 가 설정되어 있어 Pixabay 스톡 영상을 1순위로 찾습니다. 없으면 위키미디어 커먼즈 영상으로 넘어갑니다.'
         : hasPexelsKey
@@ -76,6 +79,12 @@ export default async function handler(req, res) {
   const body = await readBody(req);
   const photoKo = String(body.photoKo || body.keyword || body.clipKo || '').slice(0, 60);
   const photoEn = String(body.photoEn || body.clipEn || '').slice(0, 80);
+  // 영상 검색 전용 영어 시각어(2~3단어) — 사진 검색어와 다를 수 있습니다.
+  const videoEn = String(body.videoEn || body.videoQuery || '').slice(0, 80);
+  // Gemini 가 표식을 빼먹어도, 영상 검색어가 대상 이름 그대로면 랜드마크로 봅니다(무관한 클립 차단).
+  const kindRaw = String(body.videoKind || body.clipKind || '').slice(0, 24);
+  const videoKind =
+    kindRaw || (videoEn && photoEn && videoEn.trim().toLowerCase() === photoEn.trim().toLowerCase() ? 'specific_landmark' : '');
   const fallback = String(body.fallbackPhoto || body.fallbackClip || body.topic || '').slice(0, MAX_PROMPT_CHARS);
   const fallbackEn = String(body.fallbackPhotoEn || '').slice(0, 80);
   const cutIndex = Math.max(0, Math.round(Number(body.cutIndex ?? String(body.cutId || '').replace(/\D/g, '')) || 0));
@@ -84,7 +93,7 @@ export default async function handler(req, res) {
     : [];
 
   const video = await findStockVideo({
-    keywords: { ko: photoKo, en: photoEn, fallback, fallbackEn },
+    keywords: { ko: photoKo, en: photoEn, videoEn, fallback, fallbackEn, kind: videoKind },
     index: cutIndex,
     exclude,
     apiKey: pixabayKey(),
@@ -95,11 +104,13 @@ export default async function handler(req, res) {
   if (!video.ok) {
     return send(res, 404, {
       ok: false,
-      error: video.reason === 'no-keyword' ? 'no-keyword' : 'no-video',
+      error: video.reason === 'no-keyword' ? 'no-keyword' : video.reason === 'no-relevant-video' ? 'no-relevant-video' : 'no-video',
       message:
         video.reason === 'no-keyword'
           ? '이 컷에는 영상 검색어가 없습니다. 대본을 다시 생성하면 컷마다 검색어도 함께 만들어집니다.'
-          : '이 컷에 맞는 움직이는 스톡 클립을 찾지 못했습니다. 실제 사진(켄번즈) 또는 AI 이미지로 채웁니다.',
+          : video.reason === 'no-relevant-video'
+            ? '이 컷에 주제가 맞는 스톡 클립이 없습니다. 무관한 클립을 넣지 않고 실제 사진(줌·이동)으로 채웁니다.'
+            : '이 컷에 맞는 움직이는 스톡 클립을 찾지 못했습니다. 실제 사진(켄번즈) 또는 AI 이미지로 채웁니다.',
       attempts: (video.attempts || []).slice(0, 8),
       ms: video.ms,
     });
@@ -122,6 +133,8 @@ export default async function handler(req, res) {
     height: video.height,
     credit: videoCredit(video),
     query: video.query,
+    videoKind: video.kind || '',
+    relevance: video.relevance || 0,
     ms: video.ms,
     attempts: (video.attempts || []).slice(0, 8),
   });

@@ -334,6 +334,26 @@ function renderResult(analysis) {
             <button type="button" data-regen="${i}" class="shrink-0 text-[10px] font-bold px-2 py-1 rounded-full bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 transition">🔄 이 컷 장면 다시</button>
             <span data-credit="${i}" class="hidden min-w-0 flex-1 truncate text-[10px] text-slate-600"></span>
           </div>
+          <div data-vsearch-row="${i}" class="mt-2">
+            <div class="flex items-center gap-2">
+              <label for="vkey-${i}" class="shrink-0 text-[10px] text-slate-500">🔎 검색어</label>
+              <input
+                id="vkey-${i}"
+                data-vkey="${i}"
+                type="search"
+                enterkeyhint="search"
+                autocapitalize="none"
+                autocomplete="off"
+                spellcheck="false"
+                value="${escapeHtml(cut.videoQuery || cut.videoEn || cut.photoEn || '')}"
+                placeholder="영어 2~3단어 (예: skyscraper night)"
+                aria-label="Scene ${i + 1} 영상·사진 검색어(영어)"
+                class="min-w-0 flex-1 bg-[#0F1526] border border-white/10 rounded-lg px-2 py-1.5 text-base sm:text-[11px] text-slate-200 outline-none focus:border-sky-400"
+              />
+              <button type="button" data-vkeygo="${i}" class="shrink-0 text-[10px] font-bold px-2 py-1.5 rounded-full bg-sky-500/10 border border-sky-400/30 text-sky-300 hover:bg-sky-500/20 transition">🔍 찾기</button>
+            </div>
+            <p data-vused="${i}" class="mt-1 truncate text-[10px] text-slate-600"></p>
+          </div>
         </div>
       </div>
       <p class="mt-3 text-[11px] text-slate-600">${escapeHtml(/^확인/.test(String(cut.factHint || '')) ? cut.factHint : `확인: ${cut.factHint || ''}`)}</p>
@@ -582,6 +602,27 @@ function paintCutImageMeta(index) {
     else if (kind === 'photo') regen.textContent = videoMode ? '🎬 영상으로 바꾸기' : '🎨 AI로 바꾸기';
     else regen.textContent = videoMode ? '🎬 영상으로 바꾸기' : canPhoto ? '📷 실사로 바꾸기' : '🔄 다시 만들기';
   }
+  // 검색어 줄 — 영상·사진을 실제로 찾는 스타일에서만 보입니다(무엇으로 찾았는지 보여 주고 고칠 수 있게).
+  const searchRow = card.querySelector(`[data-vsearch-row="${index}"]`);
+  const used = searchRow ? searchRow.querySelector(`[data-vused="${index}"]`) : null;
+  if (searchRow) {
+    const searching = state.visualStyle === 'video' || state.visualStyle === 'real';
+    searchRow.classList.toggle('hidden', !searching);
+    const inputs = searchRow.querySelector(`[data-vkey="${index}"]`);
+    if (inputs && document.activeElement !== inputs) {
+      const shown = cut.videoQuery || cut.videoEn || cut.photoEn || '';
+      if (shown && inputs.value !== shown) inputs.value = shown;
+    }
+    if (used) {
+      const bits = [];
+      if (kind === 'video') {
+        bits.push(`클립: ${cut.videoTitle || cut.videoId || ''}`);
+        if (cut.videoQuery) bits.push(`검색어 "${cut.videoQuery}"`);
+      } else if (cut.videoNote) bits.push(cut.videoNote);
+      used.textContent = bits.filter(Boolean).join(' · ');
+      used.title = used.textContent;
+    }
+  }
   if (!kind) {
     badge?.classList.add('hidden');
     credit?.classList.add('hidden');
@@ -640,6 +681,9 @@ function setCutVideoData(index, data) {
   cut.videoLicense = data.license || '';
   cut.videoArtist = data.artist || '';
   cut.videoCredit = data.credit || '';
+  cut.videoQuery = data.query || '';
+  cut.videoKind = data.videoKind || data.kind || '';
+  cut.videoRelevance = Number(data.relevance) || 0;
   cut.videoDuration = Number(data.duration) || 0;
   cut.videoWidth = Number(data.width) || 0;
   cut.videoHeight = Number(data.height) || 0;
@@ -647,6 +691,7 @@ function setCutVideoData(index, data) {
   cut.imageProvider = data.provider || '';
   cut.imageCredit = data.credit || '';
   cut.imageNote = '';
+  cut.videoNote = '';
   // 포스터(첫 프레임)는 카드 썸네일·영상 로딩 중 배경으로 씁니다.
   if (data.posterUrl && !cut.imageUrl) cut.imageUrl = data.posterUrl;
   applyCutImage(index);
@@ -751,10 +796,11 @@ function paintImageBadge(text, tone = 'ok') {
 }
 
 /** 컷 1장 요청 — 서버가 실제 사진·무료 AI 경로까지 시도한 결과를 정직하게 해석합니다. */
-async function requestCutImage(cut, { realPhoto = 'first', styleOverride = '' } = {}) {
+async function requestCutImage(cut, { realPhoto = 'first', styleOverride = '', keywordOverride = '' } = {}) {
   const index = Number(cut.index) || 0;
   // 요청 스타일 — 영상 모드에서 폴백할 때는 'real'(실제 사진 → AI)
   const style = styleOverride || state.visualStyle;
+  const custom = String(keywordOverride || '').trim();
   // 같은 주제로 컷마다 다른 사진이 나오도록, 이미 쓴 사진 제목을 보내 뺀다.
   const exclude = (state.pkg?.cuts || [])
     .filter((c) => c !== cut && c.imageKind === 'photo' && c.imagePhoto?.title)
@@ -771,9 +817,9 @@ async function requestCutImage(cut, { realPhoto = 'first', styleOverride = '' } 
         cutIndex: index,
         style,
         realPhoto: style === 'real' ? realPhoto : 'skip',
-        photoKo: cut.photoKo || '',
-        photoEn: cut.photoEn || '',
-        keyword: cut.photoKo || '',
+        photoKo: custom ? '' : cut.photoKo || '',
+        photoEn: custom || cut.photoEn || '',
+        keyword: custom ? '' : cut.photoKo || '',
         fallbackPhoto: state.pkg?.meta?.photoSubject || '',
         fallbackPhotoEn: state.pkg?.meta?.photoSubjectEn || '',
         exclude,
@@ -796,8 +842,10 @@ async function requestCutImage(cut, { realPhoto = 'first', styleOverride = '' } 
   }
 }
 
-/** 컷 1개 스톡 영상 클립 요청 — 같은 출처 프록시 주소를 돌려받습니다. */
-async function requestCutVideo(cut, { avoidCurrent = false } = {}) {
+/** 컷 1개 스톡 영상 클립 요청 — 같은 출처 프록시 주소를 돌려받습니다.
+ *   queryOverride: 사용자가 카드에서 직접 적은 검색어(영어).
+ */
+async function requestCutVideo(cut, { avoidCurrent = false, queryOverride = '' } = {}) {
   const index = Number(cut.index) || 0;
   // 같은 클립이 두 컷에 겹치지 않도록 이미 쓴 클립 id 를 빼고 묻습니다.
   const exclude = (state.pkg?.cuts || [])
@@ -805,13 +853,16 @@ async function requestCutVideo(cut, { avoidCurrent = false } = {}) {
     .map((c) => c.videoId)
     .slice(0, 40);
   if (avoidCurrent && cut.videoId) exclude.push(cut.videoId);
+  const custom = String(queryOverride || '').trim();
   try {
     const res = await fetch('/api/find-video', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        photoKo: cut.photoKo || '',
-        photoEn: cut.photoEn || '',
+        photoKo: custom ? '' : cut.photoKo || '',
+        photoEn: custom ? '' : cut.photoEn || '',
+        videoEn: custom || cut.videoEn || '',
+        videoKind: custom ? '' : cut.videoKind || '',
         keyword: cut.photoKo || '',
         fallbackPhoto: state.pkg?.meta?.photoSubject || '',
         fallbackPhotoEn: state.pkg?.meta?.photoSubjectEn || '',
@@ -826,6 +877,7 @@ async function requestCutVideo(cut, { avoidCurrent = false } = {}) {
       ok: false,
       error: String(data?.error || `http-${res.status}`),
       message: String(data?.message || `HTTP ${res.status}`),
+      attempts: Array.isArray(data?.attempts) ? data.attempts : [],
     };
   } catch (err) {
     return { ok: false, error: 'network', message: String(err?.message || err) };
@@ -845,6 +897,11 @@ async function fillCutWithVideo(cut, index) {
   const photo = await requestCutImage(cut, { styleOverride: 'real' });
   if (photo.ok) {
     setCutImageData(index, photo.data, { styleUsed: 'real' });
+    // 왜 클립이 아닌 사진인지 카드에 남깁니다(무관한 클립을 끌어다 쓰지 않았다는 뜻).
+    cut.videoNote =
+      video.error === 'no-relevant-video'
+        ? `주제에 맞는 클립이 없어 실제 사진으로 채움 (버린 클립 ${Number(video.attempts?.find?.((a) => a.reason === 'no-relevant-clip')?.count) || 0}개)`
+        : '';
     return { ok: true, kind: photo.data.kind === 'photo' ? 'photo' : 'ai', data: photo.data, videoError: video };
   }
   return {
@@ -900,6 +957,75 @@ async function regenerateCutVisual(index, failureNote = '') {
   } finally {
     ai.running = false;
     if (btn) btn.disabled = false;
+    paintCutImageMeta(index);
+  }
+}
+
+/**
+ * 카드에서 직접 적은 검색어로 이 컷의 장면을 다시 찾습니다.
+ *   🎬 영상 모드 → 그 영어 검색어로 스톡 클립 / 📷 사진 모드 → 그 검색어로 실제 사진
+ *   무관한 클립은 서버가 버리므로, 없으면 "없다"고 알려 줍니다.
+ */
+async function searchCutByKeyword(index, rawKeyword) {
+  const cut = state.pkg?.cuts?.[index];
+  if (!cut) return;
+  if (ai.running) {
+    toast('지금 다른 컷의 장면을 찾고 있습니다. 끝난 뒤 다시 눌러 주세요.');
+    return;
+  }
+  const keyword = String(rawKeyword || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  const videoMode = state.visualStyle === 'video';
+  if (keyword.length < 2) {
+    toast('검색어를 2자 이상 적어 주세요. 예: skyscraper night');
+    return;
+  }
+  if (videoMode && /[가-힣]/.test(keyword)) {
+    toast('스톡 클립은 영어 태그로 찾습니다 — 영어로 적어 주세요(예: skyscraper night).');
+    return;
+  }
+
+  const btn = cardOf(index)?.querySelector(`[data-vkeygo="${index}"]`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '찾는 중…';
+  }
+  ai.running = true;
+  try {
+    if (videoMode) {
+      const r = await requestCutVideo(cut, { queryOverride: keyword, avoidCurrent: Boolean(cut.videoId) });
+      if (r.ok) {
+        setCutVideoData(index, r.data);
+        cut.videoEn = keyword;
+        toast(`Scene ${index + 1} — "${keyword}" 로 클립을 찾았습니다.`);
+        refreshImageBadgeFromPkg();
+        return;
+      }
+      toast(
+        r.error === 'no-relevant-video'
+          ? `"${keyword}" 에 맞는 클립이 없습니다. 무관한 클립은 넣지 않습니다 — 🔄 다른 클립 으로 실제 사진을 채울 수 있어요.`
+          : r.message || '클립을 찾지 못했습니다.',
+      );
+      return;
+    }
+    if (state.visualStyle !== 'real') {
+      toast('검색어로 장면을 찾는 것은 🎬 영상·📷 실제 사진 스타일에서 됩니다.');
+      return;
+    }
+    const r = await requestCutImage(cut, { styleOverride: 'real', keywordOverride: keyword, realPhoto: 'only' });
+    if (r.ok) {
+      setCutImageData(index, r.data, { styleUsed: 'real' });
+      cut.photoEn = keyword;
+      toast(`Scene ${index + 1} — "${keyword}" 로 실제 사진을 찾았습니다.`);
+      refreshImageBadgeFromPkg();
+      return;
+    }
+    toast(r.error === 'no-real-photo' ? `"${keyword}" 로 실제 사진을 찾지 못했습니다. 다른 단어로 시도해 보세요.` : r.message || '사진을 찾지 못했습니다.');
+  } finally {
+    ai.running = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '🔍 찾기';
+    }
     paintCutImageMeta(index);
   }
 }
@@ -1293,7 +1419,7 @@ function setVisualStyle(name) {
   paintStyleToggle();
   const note =
     name === 'video'
-      ? '🎬 움직이는 영상 — 실제 스톡 영상 클립(Pixabay → Pexels → 위키미디어 커먼즈)을 먼저 찾습니다. 클립이 없으면 실제 사진, 그다음 AI로 채웁니다. 대본을 다시 생성하면 컷마다 검색어(photoKo·photoEn)도 함께 만들어집니다.'
+      ? '🎬 움직이는 영상 — 실제 스톡 영상 클립을 먼저 찾습니다(Pixabay → Pexels → 위키미디어). 돌려받은 클립의 태그가 주제와 맞지 않으면 쓰지 않고, 실제 사진(줌·이동) → AI 순서로 채웁니다. 카드의 검색어를 직접 고쳐 다시 찾을 수 있습니다.'
       : name === 'real'
         ? '📷 실제 사진 — 실제 장소·사물 사진을 먼저 찾습니다. 대본을 다시 생성하면 컷마다 검색어(photoKo·photoEn)도 함께 만들어집니다.'
         : `${VISUAL_STYLES[name].emoji} ${VISUAL_STYLES[name].label} 스타일로 새로 만듭니다 — 대본을 다시 생성해 주세요.`;
@@ -1313,7 +1439,7 @@ function paintStyleToggle() {
   if (note) {
     note.textContent =
       state.visualStyle === 'video'
-        ? '실제로 움직이는 스톡 클립을 먼저 찾습니다(Pixabay → Pexels → 위키미디어 커먼즈). 클립이 없는 컷은 실제 사진(켄번즈) → AI 이미지로 채우고, 9:16 미리보기·영상 파일에서 장면이 실제로 움직입니다.'
+        ? '주제에 맞는 실제 스톡 클립만 씁니다 — 영어 태그가 주제와 맞지 않는 클립은 버리고, 그 컷은 실제 사진(켄번즈) → AI 이미지로 채웁니다. 카드의 검색어를 직접 고쳐 다시 찾을 수 있습니다.'
         : state.visualStyle === 'real'
           ? '실제 장소·사물 사진을 먼저 찾습니다(위키미디어 커먼즈 → 위키백과). 롯데타워 같은 실제 대상이 그대로 나오고, 사진이 없는 컷만 AI로 채웁니다.'
           : state.visualStyle === '3d'
@@ -2536,10 +2662,25 @@ function bind() {
   const scenes = $('#scenesList');
   scenes.addEventListener('input', onSceneEdit);
   scenes.addEventListener('click', (event) => {
+    const searchBtn = event.target.closest('[data-vkeygo]');
+    if (searchBtn) {
+      event.preventDefault();
+      const index = Number(searchBtn.dataset.vkeygo);
+      const input = cardOf(index)?.querySelector(`[data-vkey="${index}"]`);
+      searchCutByKeyword(index, input?.value || '');
+      return;
+    }
     const btn = event.target.closest('[data-regen]');
     if (!btn) return;
     event.preventDefault();
     regenerateCutVisual(Number(btn.dataset.regen));
+  });
+  // 검색어 입력창에서 Enter — 그 검색어로 바로 찾습니다(아이폰 키보드의 '검색').
+  scenes.addEventListener('keydown', (event) => {
+    const input = event.target.closest('[data-vkey]');
+    if (!input || event.key !== 'Enter') return;
+    event.preventDefault();
+    searchCutByKeyword(Number(input.dataset.vkey), input.value);
   });
   scenes.addEventListener('focusout', (event) => {
     const field = event.target.closest('[data-edit]');
