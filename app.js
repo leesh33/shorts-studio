@@ -686,6 +686,8 @@ async function requestCutImage(cut, { realPhoto = 'first' } = {}) {
         photoKo: cut.photoKo || '',
         photoEn: cut.photoEn || '',
         keyword: cut.photoKo || '',
+        fallbackPhoto: state.pkg?.meta?.photoSubject || '',
+        fallbackPhotoEn: state.pkg?.meta?.photoSubjectEn || '',
         exclude,
       }),
     });
@@ -759,8 +761,8 @@ async function generateCutImages() {
   if (btn) btn.disabled = true;
   const remaining = () => cuts.filter((c) => !c.imageUrl).length;
   const startedAt = Date.now();
-  // 실제 사진은 커먼즈/위키백과라 빠르지만, 예의상 3컷씩 나눠 묻습니다.
-  const waveLimit = photoMode ? 3 : 999;
+  // 실제 사진은 커먼즈/위키백과라 빠르지만, 한꺼번에 몰리면 429 를 받습니다 — 2컷씩 천천히.
+  const waveLimit = photoMode ? 2 : 999;
 
   setToolStatus(`${label} 생성 중 · ${ai.done}/${cuts.length} 완료`, ai.done / cuts.length);
   paintImageBadge(`${label} 생성 중 · ${ai.done}/${cuts.length} 완료`, 'busy');
@@ -774,6 +776,7 @@ async function generateCutImages() {
 
     for (let at = 0; at < wave.length; at += waveLimit) {
       const part = wave.slice(at, at + waveLimit);
+      if (photoMode && at > 0) await sleep(300);
       await Promise.all(
         part.map(async ({ cut, i }) => {
           const r = await requestCutImage(cut);

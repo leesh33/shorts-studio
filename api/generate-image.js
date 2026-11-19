@@ -129,7 +129,12 @@ export default async function handler(req, res) {
   /* ⓪ 실제 사진 먼저 — '롯데타워'를 AI 가 상상으로 그리던 문제를 해결합니다. */
   if (realPhotoMode && realPhoto !== 'skip') {
     const photo = await findRealPhoto({
-      keywords: { ko: photoKo, en: photoEn, fallback: String(body.keyword || '') },
+      keywords: {
+        ko: photoKo,
+        en: photoEn,
+        fallback: String(body.fallbackPhoto || ''),
+        fallbackEn: String(body.fallbackPhotoEn || ''),
+      },
       index: cutIndex,
       exclude,
       budgetMs: PHOTO_BUDGET_MS,

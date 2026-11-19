@@ -454,7 +454,13 @@ export default async function handler(req, res) {
   pkg = {
     ...pkg,
     cuts: pkg.cuts.map((cut) => ({ ...cut, visualPrompt: enhanceImagePrompt(cut.visualPrompt, visualStyle) })),
-    meta: { ...pkg.meta, visualStyle },
+    meta: {
+      ...pkg.meta,
+      visualStyle,
+      // 주제 단위 실제 피사체 — 컷별 검색어가 추상적일 때(예: '비상계단') 이 이름으로 다시 찾습니다.
+      photoSubject: pkg.meta.photoSubject || '',
+      photoSubjectEn: pkg.cuts.find((cut) => cut.photoEn)?.photoEn || '',
+    },
   };
 
   return send(res, 200, {
