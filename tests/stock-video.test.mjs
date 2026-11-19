@@ -246,6 +246,12 @@ test('matchClip: 뒤쪽 범용 태그만 맞는 남의 클립(고양이·호랑�
   assert.ok(matchClip(dog, terms).level >= 1);
 });
 
+test('matchClip: 그림·애니메이션 클립은 실사 자리에 쓰지 않는다', () => {
+  const terms = queryTerms({ query: 'dog eyes closeup', kind: 'generic_scene' });
+  assert.equal(matchClip({ tags: ['dog', 'cat', 'puppy', 'cartoon'], title: 'dog, cat, puppy, cartoon' }, terms).level, 0);
+  assert.ok(matchClip({ tags: ['dog', 'eyes', 'closeup'], title: 'dog, eyes, closeup' }, terms).level >= 1);
+});
+
 test('bestMatch: 한국어 제목과 영어 태그를 함께 본다', () => {
   const termsList = videoTermSets({ ko: '롯데월드타워', en: 'Lotte World Tower', kind: 'specific_landmark' });
   assert.equal(bestMatch({ tags: [], title: '롯데월드타워 야경' }, termsList).level, 2);
