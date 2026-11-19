@@ -237,6 +237,15 @@ test('matchClip: 여러 단어 시각어는 첫 피사체만 맞아도 그 장�
   assert.ok(matchClip({ tags: ['city', 'night', 'lights'], title: 'city night' }, city).level >= 1);
 });
 
+test('matchClip: 뒤쪽 범용 태그만 맞는 남의 클립(고양이·호랑이)은 버린다', () => {
+  // 실측: 'dog sleeping bed' 에 고양이 클립(tags: cat, kitten, kitty, feline, dog …)이 붙었습니다.
+  const terms = queryTerms({ query: 'dog sleeping bed', kind: 'generic_scene' });
+  const cat = { tags: ['cat', 'kitten', 'kitty', 'feline', 'dog', 'sleeping'], title: 'cat, kitten, kitty, feline' };
+  assert.equal(matchClip(cat, terms).level, 0);
+  const dog = { tags: ['dog', 'sleeping', 'bed', 'pet'], title: 'dog, sleeping, bed, pet' };
+  assert.ok(matchClip(dog, terms).level >= 1);
+});
+
 test('bestMatch: 한국어 제목과 영어 태그를 함께 본다', () => {
   const termsList = videoTermSets({ ko: '롯데월드타워', en: 'Lotte World Tower', kind: 'specific_landmark' });
   assert.equal(bestMatch({ tags: [], title: '롯데월드타워 야경' }, termsList).level, 2);
