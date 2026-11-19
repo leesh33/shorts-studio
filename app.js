@@ -1430,22 +1430,8 @@ function setVisualStyle(name) {
 function paintStyleToggle() {
   $$('[data-style]').forEach((btn) => {
     const on = btn.dataset.style === state.visualStyle;
-    btn.className = `px-3 py-3 rounded-xl text-xs font-bold border transition text-left ${
-      on ? 'bg-violet-500/15 border-violet-400/50 text-violet-100' : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-200'
-    }${btn.dataset.style === 'real' || btn.dataset.style === 'video' ? ' col-span-2' : ''}`;
     btn.setAttribute('aria-pressed', String(on));
   });
-  const note = $('#styleNote');
-  if (note) {
-    note.textContent =
-      state.visualStyle === 'video'
-        ? '주제에 맞는 실제 스톡 클립만 씁니다 — 영어 태그가 주제와 맞지 않는 클립은 버리고, 그 컷은 실제 사진(켄번즈) → AI 이미지로 채웁니다. 카드의 검색어를 직접 고쳐 다시 찾을 수 있습니다.'
-        : state.visualStyle === 'real'
-          ? '실제 장소·사물 사진을 먼저 찾습니다(위키미디어 커먼즈 → 위키백과). 롯데타워 같은 실제 대상이 그대로 나오고, 사진이 없는 컷만 AI로 채웁니다.'
-          : state.visualStyle === '3d'
-            ? '미니어처 다이오라마 · 등각 투시 · GI 조명 — 3D 쇼츠 느낌의 컷 이미지를 만듭니다.'
-            : '필름 스틸 · 자연광 · 얕은 심도 — 실사 다큐 느낌의 컷 이미지를 만듭니다.';
-  }
   const genBtn = $('#genImagesBtn');
   if (genBtn) {
     genBtn.textContent =

@@ -144,25 +144,23 @@
                 <p class="style-help-foot">바꾼 스타일은 대본을 다시 만들 때 컷 프롬프트와 검색어에 반영됩니다.</p>
               </div>
 
-              <div class="grid grid-cols-2 gap-2">
-                <button type="button" data-style="video" class="col-span-2 px-3 py-3 rounded-xl text-xs font-bold border border-white/10 bg-white/5 text-slate-400 transition text-left">
-                  🎬 움직이는 영상 <span class="text-sky-300">(스톡 클립)</span>
-                  <span class="block mt-1 text-[10px] font-normal text-slate-500">주제에 맞는 클립만 · 없으면 실제 사진(줌·이동)</span>
-                </button>
-                <button type="button" data-style="real" class="col-span-2 px-3 py-3 rounded-xl text-xs font-bold border border-white/10 bg-white/5 text-slate-400 transition text-left">
-                  📷 실제 사진 <span class="text-violet-300">(실사 우선)</span>
-                  <span class="block mt-1 text-[10px] font-normal text-slate-500">실제 장소·사물 사진을 먼저 찾습니다 · 없으면 AI</span>
-                </button>
-                <button type="button" data-style="3d" class="px-3 py-3 rounded-xl text-xs font-bold border border-white/10 bg-white/5 text-slate-400 transition text-left">
-                  🎨 3D 입체 렌더링
-                  <span class="block mt-1 text-[10px] font-normal text-slate-500">미니어처 다이오라마 · 등각 투시</span>
-                </button>
-                <button type="button" data-style="cinematic" class="px-3 py-3 rounded-xl text-xs font-bold border border-white/10 bg-white/5 text-slate-400 transition text-left">
-                  🎥 실사 시네마틱
-                  <span class="block mt-1 text-[10px] font-normal text-slate-500">필름 스틸 · 자연광 · 얕은 심도</span>
-                </button>
+              <div id="stylePicker" class="style-groups">
+                <div class="style-group">
+                  <p class="style-group-label">실제 자료 찾기</p>
+                  <div class="style-group-grid">
+                    <button type="button" data-style="video" class="style-btn">🎬 움직이는 영상</button>
+                    <button type="button" data-style="real" class="style-btn">📷 실제 사진</button>
+                  </div>
+                </div>
+
+                <div class="style-group">
+                  <p class="style-group-label">AI로 새로 그리기</p>
+                  <div class="style-group-grid">
+                    <button type="button" data-style="3d" class="style-btn">🎨 3D 입체 렌더링</button>
+                    <button type="button" data-style="cinematic" class="style-btn">🎥 실사 시네마틱</button>
+                  </div>
+                </div>
               </div>
-              <p id="styleNote" class="mt-2 text-[11px] text-slate-500">미니어처 다이오라마 · 등각 투시 · GI 조명 — 3D 쇼츠 느낌의 컷 이미지를 만듭니다.</p>
             </div>
 
             <div>
