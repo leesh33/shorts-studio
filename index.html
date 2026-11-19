@@ -105,6 +105,10 @@
                 <span class="text-violet-400 ml-2">Cut Images</span>
               </label>
               <div class="grid grid-cols-2 gap-2">
+                <button type="button" data-style="real" class="col-span-2 px-3 py-3 rounded-xl text-xs font-bold border border-white/10 bg-white/5 text-slate-400 transition text-left">
+                  📷 실제 사진 <span class="text-violet-300">(실사 우선)</span>
+                  <span class="block mt-1 text-[10px] font-normal text-slate-500">실제 장소·사물 사진을 먼저 찾습니다 · 없으면 AI</span>
+                </button>
                 <button type="button" data-style="3d" class="px-3 py-3 rounded-xl text-xs font-bold border border-white/10 bg-white/5 text-slate-400 transition text-left">
                   🎨 3D 입체 렌더링
                   <span class="block mt-1 text-[10px] font-normal text-slate-500">미니어처 다이오라마 · 등각 투시</span>
@@ -115,6 +119,28 @@
                 </button>
               </div>
               <p id="styleNote" class="mt-2 text-[11px] text-slate-500">미니어처 다이오라마 · 등각 투시 · GI 조명 — 3D 쇼츠 느낌의 컷 이미지를 만듭니다.</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold mb-3">
+                04. Video Length
+                <span class="text-violet-400 ml-2">영상 길이</span>
+              </label>
+              <div class="grid grid-cols-4 gap-1.5" id="lengthPicker">
+                <button type="button" data-length="15" class="px-1.5 py-2.5 rounded-xl text-[11px] font-bold border border-white/10 bg-white/5 text-slate-400 transition">
+                  15초<span class="block mt-0.5 text-[10px] font-normal text-slate-500">5컷</span>
+                </button>
+                <button type="button" data-length="30" class="px-1.5 py-2.5 rounded-xl text-[11px] font-bold border border-white/10 bg-white/5 text-slate-400 transition">
+                  30초<span class="block mt-0.5 text-[10px] font-normal text-slate-500">8컷</span>
+                </button>
+                <button type="button" data-length="45" class="px-1.5 py-2.5 rounded-xl text-[11px] font-bold border border-white/10 bg-white/5 text-slate-400 transition">
+                  45초<span class="block mt-0.5 text-[10px] font-normal text-slate-500">11컷</span>
+                </button>
+                <button type="button" data-length="60" class="px-1.5 py-2.5 rounded-xl text-[11px] font-bold border border-white/10 bg-white/5 text-slate-400 transition">
+                  60초<span class="block mt-0.5 text-[10px] font-normal text-slate-500">15컷</span>
+                </button>
+              </div>
+              <p id="lengthNote" class="mt-2 text-[11px] text-slate-500">30초 · 8컷 — 숏츠 기본 길이입니다.</p>
             </div>
 
             <button

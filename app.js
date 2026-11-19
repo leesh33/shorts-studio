@@ -25,13 +25,25 @@ const state = {
   hasGeminiKey: null,
   /** 비주얼 스타일 — 대본·이미지 프롬프트에 같은 값을 씁니다. */
   visualStyle: '3d',
+  /** 영상 길이 — 화면 선택기(15/30/45/60초)의 값. 컷 수도 함께 정해집니다. */
+  lengthSec: 30,
+  cutCount: 8,
 };
 
 /** 화면 토글과 요청 본문이 같은 이름을 쓰도록 한 곳에 모읍니다(서버 lib/visual-style.js 와 짝). */
 const VISUAL_STYLES = {
+  real: { label: '실제 사진', emoji: '📷' },
   '3d': { label: '3D 입체 렌더링', emoji: '🎨' },
   cinematic: { label: '실사 시네마틱', emoji: '🎥' },
 };
+
+/** 길이 선택기 — 서버 lib/engine.js LENGTH_PRESETS 와 같은 값 */
+const LENGTH_OPTIONS = [
+  { sec: 15, cuts: 5, note: '짧은 훅 · 한 가지 메시지' },
+  { sec: 30, cuts: 8, note: '숏츠 기본 길이' },
+  { sec: 45, cuts: 11, note: '스토리 전개 · 포인트 7개' },
+  { sec: 60, cuts: 15, note: '롱폼 숏츠 · 최대 길이' },
+];
 
 /** 내레이션 음성 — 'browser' 는 서버 TTS 없이 Web Speech 로 읽습니다. */
 const NARRATION_VOICES = {
@@ -167,7 +179,14 @@ async function generate(event) {
     const res = await fetch('/api/analyze-and-generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: parsed.canonical, topic, tone: 'auto', length: 36, style: state.visualStyle }),
+      body: JSON.stringify({
+        url: parsed.canonical,
+        topic,
+        tone: 'auto',
+        length: state.lengthSec,
+        cutCount: state.cutCount,
+        style: state.visualStyle,
+      }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data || !data.ok) throw new Error((data && data.message) || `요청 실패 (HTTP ${res.status})`);
@@ -175,6 +194,9 @@ async function generate(event) {
     state.pkg = data.package;
     state.mode = data.mode || data.package?.meta?.mode || 'template';
     state.gemini = data.gemini || null;
+    if (data.length?.sec) state.lengthSec = data.length.sec;
+    if (data.package?.cuts?.length) state.cutCount = data.package.cuts.length;
+    paintLengthPicker();
     state.pkg.cuts.forEach((cut) => {
       cut.beats = buildBeats(cut);
     });
@@ -288,13 +310,20 @@ function renderResult(analysis) {
           <p data-preview="${i}" class="mt-3 min-h-[1.25rem] border-l-2 border-violet-500/30 pl-2 text-xs leading-5 text-slate-400 break-keep">${highlight(cut.subtitle)}</p>
           <p class="mt-1 text-[10px] leading-5 text-slate-600">[강조] 로 감싼 말은 화면에서 보라색 · 고치면 9:16 미리보기·음성·자막 파일에 바로 반영됩니다.</p>
         </div>
-        <div class="bg-[#0B1020] rounded-xl p-5 flex gap-4">
-          <div class="min-w-0 flex-1">
-            <p class="text-xs text-blue-400 font-bold mb-3">🎬 VISUAL DIRECTION</p>
-            <p class="text-sm leading-7 text-slate-400">${escapeHtml(cut.visualKo)}<span class="block mt-1 text-slate-500">카메라: ${escapeHtml(cut.camera)}</span></p>
+        <div class="bg-[#0B1020] rounded-xl p-5">
+          <div class="flex gap-4">
+            <div class="min-w-0 flex-1">
+              <p class="text-xs text-blue-400 font-bold mb-3">🎬 VISUAL DIRECTION</p>
+              <p class="text-sm leading-7 text-slate-400">${escapeHtml(cut.visualKo)}<span class="block mt-1 text-slate-500">카메라: ${escapeHtml(cut.camera)}</span></p>
+            </div>
+            <div data-shot="${i}" class="hidden w-20 shrink-0 rounded-lg overflow-hidden border border-white/10 bg-black">
+              <img class="w-full h-full object-cover" alt="${escapeHtml(cut.label)} 장면" />
+            </div>
           </div>
-          <div data-shot="${i}" class="hidden w-20 shrink-0 rounded-lg overflow-hidden border border-white/10 bg-black">
-            <img class="w-full h-full object-cover" alt="${escapeHtml(cut.label)} AI 장면" />
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <span data-kind="${i}" class="hidden text-[10px] font-bold px-2 py-1 rounded-full border"></span>
+            <button type="button" data-regen="${i}" class="shrink-0 text-[10px] font-bold px-2 py-1 rounded-full bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 transition">🔄 이 컷 장면 다시</button>
+            <span data-credit="${i}" class="hidden min-w-0 flex-1 truncate text-[10px] text-slate-600"></span>
           </div>
         </div>
       </div>
@@ -469,10 +498,12 @@ function updateAiBanner() {
   }
   if (state.hasGeminiKey === false) {
     banner.className = 'mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-[11px] leading-relaxed text-slate-400';
-    if (title) title.textContent = '무료 모드 — 빌링 없이 동작합니다.';
+    if (title) title.textContent = state.visualStyle === 'real' ? '📷 실제 사진 모드 — 빌링 없이 동작합니다.' : '무료 모드 — 빌링 없이 동작합니다.';
     if (body) {
       body.textContent =
-        'GEMINI_API_KEY 가 없어도 컷별 9:16 장면을 무료 제공자(Pollinations · FLUX.1-schnell)로 만듭니다. 서버가 이미지 바이트를 받아 data URL 로 넘기므로 영상 다운로드에 CORS 오류가 없습니다.';
+        state.visualStyle === 'real'
+          ? '컷마다 실제 장소·사물 사진을 위키미디어 커먼즈(라이선스 표기 포함)에서 먼저 찾습니다. 사진이 없는 컷만 무료 AI(Pollinations · FLUX.1-schnell)로 채웁니다. 서버가 이미지를 받아 data URL 로 넘기므로 영상 다운로드에 CORS 오류가 없습니다.'
+          : 'GEMINI_API_KEY 가 없어도 컷별 9:16 장면을 무료 제공자(Pollinations · FLUX.1-schnell)로 만듭니다. 서버가 이미지 바이트를 받아 data URL 로 넘기므로 영상 다운로드에 CORS 오류가 없습니다.';
     }
     banner.classList.remove('hidden');
     return;
@@ -510,6 +541,60 @@ function applyCutImage(index) {
     const img = slot.querySelector('img');
     if (img && img.getAttribute('src') !== cut.imageUrl) img.src = cut.imageUrl;
   }
+  paintCutImageMeta(index);
+}
+
+/** 컷 카드의 📷 실사 / 🎨 AI 배지 · 사진 출처 · 다시 만들기 버튼 문구. */
+function paintCutImageMeta(index) {
+  const cut = state.pkg?.cuts?.[index];
+  const card = cardOf(index);
+  if (!cut || !card) return;
+  const badge = card.querySelector(`[data-kind="${index}"]`);
+  const credit = card.querySelector(`[data-credit="${index}"]`);
+  const regen = card.querySelector(`[data-regen="${index}"]`);
+  if (regen) {
+    const canPhoto = state.visualStyle === 'real';
+    if (!cut.imageUrl) regen.textContent = canPhoto ? '📷 실제 사진 찾기' : '🔄 이 컷 장면 다시';
+    else if (cut.imageKind === 'photo') regen.textContent = '🎨 AI로 바꾸기';
+    else regen.textContent = canPhoto ? '📷 실사로 바꾸기' : '🔄 다시 만들기';
+  }
+  if (!cut.imageUrl) {
+    badge?.classList.add('hidden');
+    credit?.classList.add('hidden');
+    return;
+  }
+  const isPhoto = cut.imageKind === 'photo';
+  if (badge) {
+    badge.textContent = isPhoto ? '📷 실사' : '🎨 AI';
+    badge.className = `text-[10px] font-bold px-2 py-1 rounded-full border ${
+      isPhoto
+        ? 'text-emerald-300 border-emerald-400/30 bg-emerald-400/10'
+        : 'text-violet-300 border-violet-400/30 bg-violet-400/10'
+    }`;
+    badge.title = isPhoto
+      ? `실제 사진 · ${providerName(cut.imageProvider)}${cut.imagePhoto?.license ? ` · ${cut.imagePhoto.license}` : ''}`
+      : `AI 생성 · ${providerName(cut.imageProvider)}`;
+    badge.classList.remove('hidden');
+  }
+  if (credit) {
+    const text = isPhoto && cut.imageCredit ? cut.imageCredit : '';
+    credit.textContent = text;
+    credit.title = text;
+    credit.classList.toggle('hidden', !text);
+  }
+}
+
+/** 이미지 응답 하나를 컷 상태에 반영합니다(사진이면 출처도 함께). */
+function setCutImageData(index, data) {
+  const cut = state.pkg?.cuts?.[index];
+  if (!cut || !data?.image) return;
+  cut.imageUrl = data.image;
+  cut.imageProvider = data.provider || 'free';
+  cut.imageModel = data.model || '';
+  cut.imageKind = data.kind === 'photo' ? 'photo' : 'ai';
+  cut.imageCredit = data.photo?.credit || data.credit || '';
+  cut.imagePhoto = data.photo || null;
+  applyCutImage(index);
 }
 
 function applyAllCutImages() {
@@ -525,9 +610,11 @@ function refreshImageBadgeFromPkg() {
   if (!state.pkg || ai.running) return;
   const total = state.pkg.cuts.length;
   const made = state.pkg.cuts.filter((c) => c.imageUrl).length;
-  if (made === total) paintImageBadge(`무료 AI 이미지 완료 · ${made}/${total}`, 'ok');
-  else if (made > 0) paintImageBadge(`무료 AI · ${made}/${total} 완료`, 'ok');
-  else paintImageBadge(`무료 AI 이미지 · 0/${total} 준비됨`, 'ok');
+  const photos = state.pkg.cuts.filter((c) => c.imageKind === 'photo').length;
+  const mix = photos ? `📷 실사 ${photos}컷${photos < made ? ` · 🎨 AI ${made - photos}컷` : ''}` : '무료 AI';
+  if (made === total) paintImageBadge(`장면 완료 · ${made}/${total} (${mix})`, 'ok');
+  else if (made > 0) paintImageBadge(`장면 · ${made}/${total} 완료 (${mix})`, 'ok');
+  else paintImageBadge('무료 AI 이미지 · 0/' + total + ' 준비됨', 'ok');
 }
 
 function sleep(ms) {
@@ -538,6 +625,9 @@ function providerName(provider) {
   if (provider === 'gemini') return 'Gemini';
   if (provider === 'hf-flux-free') return 'FLUX.1-schnell 무료';
   if (provider === 'pollinations-free') return 'Pollinations 무료';
+  if (provider === 'wikimedia-commons') return '위키미디어 커먼즈';
+  if (provider === 'wikipedia-ko') return '위키백과';
+  if (provider === 'wikipedia-en') return 'Wikipedia (EN)';
   return '무료 AI';
 }
 
@@ -574,13 +664,30 @@ function paintImageBadge(text, tone = 'ok') {
   }
 }
 
-/** 컷 1장 요청 — 서버가 무료 경로까지 시도한 결과를 정직하게 해석합니다. */
-async function requestCutImage(cut) {
+/** 컷 1장 요청 — 서버가 실제 사진·무료 AI 경로까지 시도한 결과를 정직하게 해석합니다. */
+async function requestCutImage(cut, { realPhoto = 'first' } = {}) {
+  const index = Number(cut.index) || 0;
+  // 같은 주제로 컷마다 다른 사진이 나오도록, 이미 쓴 사진 제목을 보내 뺀다.
+  const exclude = (state.pkg?.cuts || [])
+    .filter((c) => c !== cut && c.imageKind === 'photo' && c.imagePhoto?.title)
+    .map((c) => c.imagePhoto.title)
+    .slice(0, 40);
   try {
     const res = await fetch('/api/generate-image', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: cut.visualPrompt, aspectRatio: '9:16', cutId: cut.id, style: state.visualStyle }),
+      body: JSON.stringify({
+        prompt: cut.visualPrompt,
+        aspectRatio: '9:16',
+        cutId: cut.id,
+        cutIndex: index,
+        style: state.visualStyle,
+        realPhoto: state.visualStyle === 'real' ? realPhoto : 'skip',
+        photoKo: cut.photoKo || '',
+        photoEn: cut.photoEn || '',
+        keyword: cut.photoKo || '',
+        exclude,
+      }),
     });
     const data = await res.json().catch(() => null);
     if (data?.ok && data.image) return { ok: true, data };
@@ -599,6 +706,35 @@ async function requestCutImage(cut) {
   }
 }
 
+/** 컷 하나만 다시 만들기 — 📷 실사 ↔ 🎨 AI 토글도 이 버튼으로 합니다. */
+async function regenerateCutImage(index, failureNote = '') {
+  const cut = state.pkg?.cuts?.[index];
+  if (!cut || ai.running) return;
+  const wantPhoto = state.visualStyle === 'real' && cut.imageKind !== 'photo';
+  const btn = cardOf(index)?.querySelector(`[data-regen="${index}"]`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = wantPhoto ? '📷 사진 찾는 중…' : '🎨 만드는 중…';
+  }
+  ai.running = true;
+  try {
+    const r = await requestCutImage(cut, { realPhoto: wantPhoto ? 'only' : 'skip' });
+    if (r.ok) {
+      setCutImageData(index, r.data);
+      const kind = r.data.kind === 'photo' ? '📷 실제 사진' : '🎨 AI 이미지';
+      toast(`Scene ${index + 1} — ${kind}으로 바꿨습니다.`);
+      refreshImageBadgeFromPkg();
+      return;
+    }
+    const note = r.error === 'no-real-photo' ? '실제 사진을 찾지 못했습니다. 🎨 AI로 다시 시도해 보세요.' : r.message || '다시 만들지 못했습니다.';
+    toast(failureNote ? `${failureNote} ${note}` : note);
+  } finally {
+    ai.running = false;
+    if (btn) btn.disabled = false;
+    paintCutImageMeta(index);
+  }
+}
+
 async function generateCutImages() {
   if (!state.pkg) return;
   if (ai.running) return;
@@ -610,6 +746,8 @@ async function generateCutImages() {
     return;
   }
 
+  const photoMode = state.visualStyle === 'real';
+  const label = photoMode ? '📷 실제 사진' : '무료 AI 이미지';
   ai.running = true;
   ai.providers = {};
   ai.rounds = 0;
@@ -621,9 +759,11 @@ async function generateCutImages() {
   if (btn) btn.disabled = true;
   const remaining = () => cuts.filter((c) => !c.imageUrl).length;
   const startedAt = Date.now();
+  // 실제 사진은 커먼즈/위키백과라 빠르지만, 예의상 3컷씩 나눠 묻습니다.
+  const waveLimit = photoMode ? 3 : 999;
 
-  setToolStatus(`무료 AI 이미지 생성 중 · ${ai.done}/${cuts.length} 완료`, ai.done / cuts.length);
-  paintImageBadge(`무료 AI 이미지 생성 중 · ${ai.done}/${cuts.length} 완료`, 'busy');
+  setToolStatus(`${label} 생성 중 · ${ai.done}/${cuts.length} 완료`, ai.done / cuts.length);
+  paintImageBadge(`${label} 생성 중 · ${ai.done}/${cuts.length} 완료`, 'busy');
 
   // 한 번에 다 보내고(파도), 대기열에 막힌 컷만 서버가 알려준 초만큼 쉬었다가 다시 보냅니다.
   while (pending.length && ai.rounds < AI_MAX_ROUNDS) {
@@ -632,36 +772,36 @@ async function generateCutImages() {
     pending = [];
     let waitMs = 0;
 
-    await Promise.all(
-      wave.map(async ({ cut, i }) => {
-        const r = await requestCutImage(cut);
-        if (r.ok) {
-          cut.imageUrl = r.data.image;
-          cut.imageProvider = r.data.provider || 'free';
-          cut.imageModel = r.data.model || '';
-          ai.providers[cut.imageProvider] = (ai.providers[cut.imageProvider] || 0) + 1;
-          ai.done = cuts.length - remaining();
-          applyCutImage(i);
-          const done = `${ai.done}/${cuts.length} 완료`;
-          const who = providerSummary();
-          setToolStatus(`무료 AI 이미지 생성 중 · ${done}${who ? ` (${who})` : ''}`, ai.done / cuts.length);
-          paintImageBadge(`무료 AI 이미지 생성 중 · ${done}`, 'busy');
-          return;
-        }
-        ai.error = r.message || r.error;
-        if (r.retryable) {
-          pending.push({ cut, i });
-          waitMs = Math.max(waitMs, Number(r.retryAfterMs) || 0);
-        } else {
-          ai.failed += 1;
-        }
-      }),
-    );
+    for (let at = 0; at < wave.length; at += waveLimit) {
+      const part = wave.slice(at, at + waveLimit);
+      await Promise.all(
+        part.map(async ({ cut, i }) => {
+          const r = await requestCutImage(cut);
+          if (r.ok) {
+            setCutImageData(i, r.data);
+            ai.providers[cut.imageProvider] = (ai.providers[cut.imageProvider] || 0) + 1;
+            ai.done = cuts.length - remaining();
+            const done = `${ai.done}/${cuts.length} 완료`;
+            const who = providerSummary();
+            setToolStatus(`${label} 생성 중 · ${done}${who ? ` (${who})` : ''}`, ai.done / cuts.length);
+            paintImageBadge(`${label} 생성 중 · ${done}`, 'busy');
+            return;
+          }
+          ai.error = r.message || r.error;
+          if (r.retryable) {
+            pending.push({ cut, i });
+            waitMs = Math.max(waitMs, Number(r.retryAfterMs) || 0);
+          } else {
+            ai.failed += 1;
+          }
+        }),
+      );
+    }
 
     if (pending.length) {
       const waitSec = Math.max(8, Math.round(waitMs / 1000));
-      setToolStatus(`무료 이미지 대기 중 · ${waitSec}초 뒤 ${pending.length}컷 재시도 (${ai.rounds}/${AI_MAX_ROUNDS})`, ai.done / cuts.length);
-      paintImageBadge(`무료 AI 대기 중 · ${ai.done}/${cuts.length} 완료 · ${waitSec}초 뒤 재시도`, 'busy');
+      setToolStatus(`${label} 대기 중 · ${waitSec}초 뒤 ${pending.length}컷 재시도 (${ai.rounds}/${AI_MAX_ROUNDS})`, ai.done / cuts.length);
+      paintImageBadge(`${label} 대기 중 · ${ai.done}/${cuts.length} 완료 · ${waitSec}초 뒤 재시도`, 'busy');
       await sleep(Math.min(60_000, waitMs));
     }
   }
@@ -673,11 +813,17 @@ async function generateCutImages() {
   const made = total - remaining();
   const who = providerSummary();
   const took = Math.round((Date.now() - startedAt) / 1000);
+  const photoCount = cuts.filter((c) => c.imageKind === 'photo').length;
 
   if (!remaining()) {
-    setToolStatus(`무료 AI 장면 ${made}개 완료 (${took}초${who ? ` · ${who}` : ''}) — 플레이어에 반영했습니다.`, 1);
-    paintImageBadge(`무료 AI 이미지 완료 · ${made}/${total} (${who || '무료 AI'})`, 'ok');
-    toast('컷별 AI 장면을 무료 생성해 플레이어에 입혔습니다.');
+    const mix = photoCount ? `📷 실사 ${photoCount}컷${photoCount < total ? ` · 🎨 AI ${total - photoCount}컷` : ''}` : `🎨 AI ${total}컷`;
+    setToolStatus(`장면 ${made}개 완료 (${took}초 · ${mix}) — 플레이어에 반영했습니다.`, 1);
+    paintImageBadge(`장면 완료 · ${made}/${total} (${mix})`, 'ok');
+    toast(
+      photoCount
+        ? `컷별 장면을 채웠습니다 — 실제 사진 ${photoCount}컷${photoCount < total ? `, AI ${total - photoCount}컷` : ''}.`
+        : '컷별 AI 장면을 무료 생성해 플레이어에 입혔습니다.',
+    );
     setTimeout(() => setToolStatus('', 0), 6000);
     return;
   }
@@ -685,9 +831,9 @@ async function generateCutImages() {
   const left = remaining();
   ai.failed = Math.max(ai.failed, left);
   const reason = ai.error || '무료 대기열이 혼잡합니다';
-  setToolStatus(`무료 AI 장면 ${made}/${total} 완료 · ${left}컷 남음 — ${reason.slice(0, 90)}`, made / total);
-  paintImageBadge(`무료 AI · ${made}/${total} 완료 · ${left}컷은 잠시 뒤 🎨 다시 시도`, 'warn');
-  toast(`${made}/${total}컷 완료 — 남은 ${left}컷은 잠시 뒤 🎨 버튼으로 다시 시도해 주세요.`);
+  setToolStatus(`${label} 장면 ${made}/${total} 완료 · ${left}컷 남음 — ${reason.slice(0, 90)}`, made / total);
+  paintImageBadge(`${label} · ${made}/${total} 완료 · ${left}컷은 잠시 뒤 다시 시도`, 'warn');
+  toast(`${made}/${total}컷 완료 — 남은 ${left}컷은 잠시 뒤 버튼으로 다시 시도해 주세요.`);
   updateAiBanner();
 }
 
@@ -952,7 +1098,12 @@ function setVisualStyle(name) {
   if (!VISUAL_STYLES[name] || state.visualStyle === name) return;
   state.visualStyle = name;
   paintStyleToggle();
-  toast(`${VISUAL_STYLES[name].emoji} ${VISUAL_STYLES[name].label} 스타일로 새로 만듭니다 — 대본을 다시 생성해 주세요.`);
+  const note =
+    name === 'real'
+      ? '📷 실제 사진 — 실제 장소·사물 사진을 먼저 찾습니다. 대본을 다시 생성하면 컷마다 검색어(photoKo·photoEn)도 함께 만들어집니다.'
+      : `${VISUAL_STYLES[name].emoji} ${VISUAL_STYLES[name].label} 스타일로 새로 만듭니다 — 대본을 다시 생성해 주세요.`;
+  toast(note);
+  if (state.pkg) state.pkg.cuts.forEach((_, i) => paintCutImageMeta(i));
 }
 
 function paintStyleToggle() {
@@ -960,16 +1111,47 @@ function paintStyleToggle() {
     const on = btn.dataset.style === state.visualStyle;
     btn.className = `px-3 py-3 rounded-xl text-xs font-bold border transition text-left ${
       on ? 'bg-violet-500/15 border-violet-400/50 text-violet-100' : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-200'
-    }`;
+    }${btn.dataset.style === 'real' ? ' col-span-2' : ''}`;
     btn.setAttribute('aria-pressed', String(on));
   });
   const note = $('#styleNote');
   if (note) {
     note.textContent =
-      state.visualStyle === '3d'
-        ? '미니어처 다이오라마 · 등각 투시 · GI 조명 — 3D 쇼츠 느낌의 컷 이미지를 만듭니다.'
-        : '필름 스틸 · 자연광 · 얕은 심도 — 실사 다큐 느낌의 컷 이미지를 만듭니다.';
+      state.visualStyle === 'real'
+        ? '실제 장소·사물 사진을 먼저 찾습니다(위키미디어 커먼즈 → 위키백과). 롯데타워 같은 실제 대상이 그대로 나오고, 사진이 없는 컷만 AI로 채웁니다.'
+        : state.visualStyle === '3d'
+          ? '미니어처 다이오라마 · 등각 투시 · GI 조명 — 3D 쇼츠 느낌의 컷 이미지를 만듭니다.'
+          : '필름 스틸 · 자연광 · 얕은 심도 — 실사 다큐 느낌의 컷 이미지를 만듭니다.';
   }
+  const genBtn = $('#genImagesBtn');
+  if (genBtn) genBtn.textContent = state.visualStyle === 'real' ? '📷 컷별 실제 사진 채우기' : '🎨 컷별 AI 이미지 생성';
+  updateAiBanner();
+}
+
+/* ───────────────────── ⏱ 영상 길이 선택 ───────────────────── */
+
+/** 길이 선택기 — 고른 초와 컷 수가 대본 요청 본문(length·cutCount)에 그대로 들어갑니다. */
+function setLength(sec) {
+  const option = LENGTH_OPTIONS.find((o) => o.sec === Number(sec));
+  if (!option || state.lengthSec === option.sec) return;
+  state.lengthSec = option.sec;
+  state.cutCount = option.cuts;
+  paintLengthPicker();
+  const note = state.pkg ? ` — 대본을 다시 생성하면 ${option.cuts}컷으로 다시 씁니다.` : '';
+  toast(`약 ${option.sec}초 · ${option.cuts}컷${note}`);
+}
+
+function paintLengthPicker() {
+  $$('[data-length]').forEach((btn) => {
+    const on = Number(btn.dataset.length) === state.lengthSec;
+    btn.className = `px-1.5 py-2.5 rounded-xl text-[11px] font-bold border transition ${
+      on ? 'bg-violet-500/20 border-violet-400/50 text-violet-100' : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-200'
+    }`;
+    btn.setAttribute('aria-pressed', String(on));
+  });
+  const note = $('#lengthNote');
+  const option = LENGTH_OPTIONS.find((o) => o.sec === state.lengthSec);
+  if (note) note.textContent = `약 ${state.lengthSec}초 · ${state.cutCount}컷 — ${option?.note || '선택한 길이로 대본을 씁니다'}`;
 }
 
 /* ───────────────────── 🎬 영상 파일 내보내기 ───────────────────── */
@@ -1799,6 +1981,7 @@ function closePlayer() {
 function scriptText() {
   const pkg = state.pkg;
   const bp = state.blueprint || {};
+  const photos = pkg.cuts.filter((c) => c.imageKind === 'photo' && c.imageCredit);
   const head = [
     `# ${bp.source?.title ? `${pkg.meta.topic} (${bp.source.title.slice(0, 40)} 리믹스)` : pkg.meta.topic}`,
     `총 ${Math.round(pkg.meta.totalSec)}초 · ${pkg.cuts.length}컷 · 템포 ${pkg.tts.rate}x · ${pkg.meta.strategyLabel}`,
@@ -1809,7 +1992,15 @@ function scriptText() {
     (c) =>
       `[${c.index + 1}] ${clock(c.start)}-${clock(c.end)} · ${c.label}\n내레이션: ${c.narration || stripMarkup(c.subtitle)}\n자막: ${c.subtitle}\n연출: ${c.visualKo}\n카메라: ${c.camera}\n`,
   );
-  return [...head, ...body].join('\n');
+  // 실사 사진은 라이선스 표기가 필요합니다 — 영상 설명에 붙여넣을 수 있게 함께 내보냅니다.
+  const credits = photos.length
+    ? [
+        '',
+        '[사진 출처 — 영상 설명에 함께 적어 주세요]',
+        ...photos.map((c) => `Scene ${c.index + 1}: ${c.imageCredit}${c.imagePhoto?.page ? ` (${c.imagePhoto.page})` : ''}`),
+      ]
+    : [];
+  return [...head, ...body, ...credits].join('\n');
 }
 
 function promptsText() {
@@ -1872,6 +2063,12 @@ function bind() {
   /* 씬 카드 인라인 편집 — 카드가 다시 그려져도 살아 있게 목록에 위임합니다. */
   const scenes = $('#scenesList');
   scenes.addEventListener('input', onSceneEdit);
+  scenes.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-regen]');
+    if (!btn) return;
+    event.preventDefault();
+    regenerateCutImage(Number(btn.dataset.regen));
+  });
   scenes.addEventListener('focusout', (event) => {
     const field = event.target.closest('[data-edit]');
     if (!field) return;
@@ -1917,6 +2114,7 @@ function bind() {
 
   $$('[data-voice]').forEach((btn) => btn.addEventListener('click', () => setNarrationVoice(btn.dataset.voice)));
   $$('[data-style]').forEach((btn) => btn.addEventListener('click', () => setVisualStyle(btn.dataset.style)));
+  $$('[data-length]').forEach((btn) => btn.addEventListener('click', () => setLength(btn.dataset.length)));
 
   $$('[data-export]').forEach((btn) => btn.addEventListener('click', () => doExport(btn.dataset.export)));
 
@@ -1924,6 +2122,7 @@ function bind() {
   $('#downloadVideoBtn')?.addEventListener('click', exportVideo);
   paintImageBadge('무료 AI 이미지 · 준비됨', 'ok');
   paintStyleToggle();
+  paintLengthPicker();
   paintVoicePills();
   defaultNarrationNote();
   loadHealth();

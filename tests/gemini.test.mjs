@@ -47,6 +47,7 @@ test('buildScriptPrompt: 레퍼런스·주제·규칙이 모두 들어간다', (
     topic: TOPIC,
     tone: 'auto',
     targetLen: 36,
+    cutCount: 7,
     meta: { title: '레퍼런스 제목', channel: '채널', durationSec: 31, description: '설명글입니다' },
     transcript: '자막 대사입니다. 두 번째 문장입니다.',
     facts: 'GTX-D 노선',
@@ -55,7 +56,8 @@ test('buildScriptPrompt: 레퍼런스·주제·규칙이 모두 들어간다', (
   assert.ok(prompt.includes(TOPIC));
   assert.ok(prompt.includes('레퍼런스 제목'));
   assert.ok(prompt.includes('자막 대사입니다'));
-  assert.ok(prompt.includes('6~8개'));
+  assert.ok(prompt.includes('정확히 7컷'));
+  assert.ok(prompt.includes('hook'));
   assert.ok(prompt.includes('[대괄호]'));
   assert.ok(prompt.includes('GTX-D 노선'));
   assert.ok(prompt.includes('visualPrompt'));
@@ -110,8 +112,8 @@ test('normalizeAiScript: 컷이 6개 미만이면 폴백 신호를 준다', () =
   assert.match(short.reason, /too-few-cuts/);
 });
 
-test('normalizeAiScript: 9컷은 8컷으로 줄이고 경고를 남긴다', () => {
-  const many = normalizeAiScript(sampleAi(9), { topic: TOPIC, targetLen: 45 });
+test('normalizeAiScript: 요청한 컷보다 많으면 그 수로 줄이고 경고를 남긴다', () => {
+  const many = normalizeAiScript(sampleAi(9), { topic: TOPIC, targetLen: 45, cutCount: 8 });
   assert.equal(many.ok, true);
   assert.equal(many.cuts.length, 8);
   assert.ok(many.warnings.length >= 1);

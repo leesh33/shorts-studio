@@ -2,7 +2,7 @@
  * api/analyze-and-generate.js — Vercel Serverless Function
  * ─────────────────────────────────────────────────────────────
  * POST /api/analyze-and-generate
- *   body: { url, topic, tone?, length?, facts?, referenceText?, reference? }
+ *   body: { url, topic, tone?, length?, cutCount?, style?, facts?, referenceText?, reference? }
  *   응답: { ok, analysis: { source, attempts, blueprint }, package }
  *
  * 하는 일
@@ -10,7 +10,7 @@
  *      - 유튜브 영상 페이지(제목·길이·설명글) → oEmbed(제목·채널·썸네일) → 실패해도 계속
  *      - YOUTUBE_API_KEY 가 있으면 Data API v3 로 한 번 더 보강
  *   ② 그 정보로 '레퍼런스 블루프린트'(훅 유형·리듬·컷 수·자막 스타일·템포)를 만듭니다.
- *   ③ 주제 한 줄로 새 쇼츠 패키지(6~8컷)를 만듭니다.
+ *   ③ 주제 한 줄로 새 쇼츠 패키지(5~15컷, 고른 길이 15~60초)를 만듭니다.
  *      - GEMINI_API_KEY 가 있으면 Gemini 가 레퍼런스를(영상까지) 보고 대본을 직접 씁니다 → mode: 'gemini'
  *      - 키가 없거나·시간 초과·형식 오류면 로컬 엔진 대본으로 조용히 폴백 → mode: 'template'
  *
@@ -19,7 +19,7 @@
  *   · 키는 서버 환경변수에만 있고 응답에 담지 않습니다(응답에는 mode·모델명·시도 기록만).
  *   · CORS 를 열지 않아 이 사이트에서만 호출됩니다.
  */
-import { analyzeReference, generatePackage, parseYouTubeUrl } from '../lib/engine.js';
+import { analyzeReference, generatePackage, parseYouTubeUrl, resolveLength, lengthCatalog } from '../lib/engine.js';
 import {
   SCRIPT_MODEL_FALLBACKS,
   buildScriptPrompt,
@@ -55,11 +55,12 @@ function scriptModels() {
 }
 
 /** Gemini 가 쓴 대본을 패키지에 입힙니다. 실패하면 { ok:false, report } 만 돌려줍니다. */
-async function writeWithGemini({ apiKey, url, topic, tone, targetLen, meta, transcript, facts, blueprint, basePkg, style }) {
+async function writeWithGemini({ apiKey, url, topic, tone, targetLen, cutCount, meta, transcript, facts, blueprint, basePkg, style }) {
   const prompt = buildScriptPrompt({
     topic,
     tone,
     targetLen,
+    cutCount,
     meta,
     transcript,
     facts,
@@ -89,7 +90,7 @@ async function writeWithGemini({ apiKey, url, topic, tone, targetLen, meta, tran
     };
   }
 
-  const normalized = normalizeAiScript(parsed.data, { topic, tone, targetLen, blueprint });
+  const normalized = normalizeAiScript(parsed.data, { topic, tone, targetLen, cutCount, blueprint });
   if (!normalized.ok) {
     return {
       ok: false,
@@ -390,12 +391,15 @@ export default async function handler(req, res) {
   const tone = String(body.tone || 'auto');
   const facts = String(body.facts || '').slice(0, 4000);
   const visualStyle = normalizeStyle(body.style);
+  // 길이·컷 수 — 화면의 선택기에서 온 값을 그대로 씁니다(15/30/45/60초 · 5/8/11/15컷).
+  const plan = resolveLength(body.length, body.cutCount);
   let pkg;
   try {
     pkg = generatePackage({
       topic,
       tone,
-      length: Number(body.length) || 0,
+      length: plan.sec,
+      cutCount: plan.cuts,
       facts,
       blueprint,
     });
@@ -421,7 +425,8 @@ export default async function handler(req, res) {
         url: parsed.canonical,
         topic,
         tone,
-        targetLen: Number(body.length) || blueprint.source?.durationSec || 36,
+        targetLen: plan.sec,
+        cutCount: plan.cuts,
         meta,
         transcript: String(body.referenceText || '').slice(0, 4000) || transcriptText || '',
         facts,
@@ -458,7 +463,9 @@ export default async function handler(req, res) {
     gemini,
     visualStyle,
     visualStyles: styleCatalog(),
+    length: { sec: plan.sec, cuts: plan.cuts, label: plan.label, preset: Boolean(plan.preset) },
+    lengthOptions: lengthCatalog(),
     analysis: { ...analysis, blueprint },
-    package: { ...pkg, meta: { ...pkg.meta, mode } },
+    package: { ...pkg, meta: { ...pkg.meta, mode, length: plan.sec, lengthLabel: plan.label } },
   });
 }

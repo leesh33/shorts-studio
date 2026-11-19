@@ -442,3 +442,170 @@ test('health: hasGeminiKey 불리언만 노출하고 키 값은 숨긴다', asyn
     assert.equal(JSON.parse(res.body).hasGeminiKey, false);
   });
 });
+
+/* ───────────────────── ⏱ 길이 선택 · 📷 실제 사진 ───────────────────── */
+
+const COMMONS_PAYLOAD = {
+  query: {
+    pages: [
+      {
+        title: 'File:Lotte World Tower logo.svg',
+        index: 1,
+        imageinfo: [{ mime: 'image/svg+xml', width: 284, height: 37, url: 'https://upload.wikimedia.org/logo.svg' }],
+      },
+      {
+        title: 'File:Lotte World Tower 20170505 173622.jpg',
+        index: 2,
+        imageinfo: [
+          {
+            mime: 'image/jpeg',
+            width: 2448,
+            height: 3264,
+            thumbwidth: 1200,
+            thumbheight: 1600,
+            thumburl: 'https://upload.wikimedia.org/tower.jpg',
+            url: 'https://upload.wikimedia.org/tower.jpg',
+            descriptionurl: 'https://commons.wikimedia.org/wiki/File:Lotte_World_Tower_20170505_173622.jpg',
+            extmetadata: { LicenseShortName: { value: 'CC BY 4.0' }, Artist: { value: 'Photo Person' } },
+          },
+        ],
+      },
+    ],
+  },
+};
+
+test('analyze: 길이·컷 수를 고르면 그대로 11컷·45초 대본을 만든다', async () => {
+  await withKey(null, async () => {
+    const res = mockRes();
+    await analyzeHandler(
+      mockReq({ body: { url: 'https://www.youtube.com/shorts/2QZPPEle9IY', topic: TOPIC, reference: blueprint, length: 45, cutCount: 11 } }),
+      res,
+    );
+    const data = JSON.parse(res.body);
+    assert.equal(res.statusCode, 200);
+    assert.equal(data.package.cuts.length, 11);
+    assert.equal(data.package.meta.cutCount, 11);
+    assert.equal(data.package.meta.length, 45);
+    assert.ok(Math.abs(data.package.meta.totalSec - 45) <= 8, `총 길이 ${data.package.meta.totalSec}`);
+    for (let i = 1; i < data.package.cuts.length; i += 1) {
+      assert.equal(data.package.cuts[i].start, data.package.cuts[i - 1].end);
+    }
+    assert.ok(data.package.cuts[10].label.includes('마무리'));
+    assert.ok(Array.isArray(data.lengthOptions) && data.lengthOptions.some((o) => o.sec === 60 && o.cuts === 15));
+  });
+});
+
+test('analyze: 60초·15컷도 만들고 자막·타임코드가 이어진다', async () => {
+  await withKey(null, async () => {
+    const res = mockRes();
+    await analyzeHandler(
+      mockReq({ body: { url: 'https://www.youtube.com/shorts/2QZPPEle9IY', topic: '롯데타워의 비밀', reference: blueprint, length: 60, cutCount: 15 } }),
+      res,
+    );
+    const data = JSON.parse(res.body);
+    assert.equal(data.package.cuts.length, 15);
+    assert.ok(data.package.cuts.every((c) => c.narration.length > 0 && c.subtitle.length > 0));
+    assert.ok(Math.abs(data.package.meta.totalSec - 60) <= 10, `총 길이 ${data.package.meta.totalSec}`);
+    assert.ok(data.package.copy.subtitles.includes('-->'));
+    assert.ok(data.package.tts.chunks.length >= 15);
+  });
+});
+
+test('analyze: style:real 이면 컷마다 실제 사진 검색어(photoKo)가 붙고 AI 3D 접미사가 없다', async () => {
+  await withKey(null, async () => {
+    const res = mockRes();
+    await analyzeHandler(
+      mockReq({ body: { url: 'https://www.youtube.com/shorts/2QZPPEle9IY', topic: '롯데타워의 비밀', reference: blueprint, style: 'real', length: 30, cutCount: 8 } }),
+      res,
+    );
+    const data = JSON.parse(res.body);
+    assert.equal(data.visualStyle, 'real');
+    assert.equal(data.package.meta.visualStyle, 'real');
+    assert.equal(data.package.cuts.length, 8);
+    assert.ok(data.package.cuts.every((c) => c.photoKo === '롯데타워'), '주제에서 실제 피사체를 뽑습니다');
+    assert.doesNotMatch(data.package.cuts[0].visualPrompt, /diorama/i);
+  });
+});
+
+test('generate-image: style:real 이면 AI 가 아니라 커먼즈 실제 사진을 먼저 돌려준다', async () => {
+  const seen = [];
+  await withKey(null, () =>
+    withFetch(
+      async (url) => {
+        const u = String(url);
+        seen.push(u);
+        if (u.includes('commons.wikimedia.org/w/api.php')) return jsonRes(COMMONS_PAYLOAD);
+        if (u.includes('upload.wikimedia.org')) return binaryRes(jpegBytes(9000), 'image/jpeg');
+        return binaryRes(jpegBytes(), 'image/jpeg');
+      },
+      async () => {
+        const res = mockRes();
+        await imageHandler(
+          mockReq({
+            body: {
+              prompt: 'Photoreal editorial photograph, Lotte World Tower at dusk, 9:16 vertical',
+              aspectRatio: '9:16',
+              cutId: 'cut-1',
+              cutIndex: 0,
+              style: 'real',
+              photoKo: '롯데타워',
+              photoEn: 'Lotte World Tower',
+            },
+          }),
+          res,
+        );
+        const data = JSON.parse(res.body);
+        assert.equal(res.statusCode, 200);
+        assert.equal(data.ok, true);
+        assert.equal(data.kind, 'photo');
+        assert.equal(data.provider, 'wikimedia-commons');
+        assert.match(data.image, /^data:image\/jpeg;base64,/);
+        assert.match(data.credit, /CC BY/);
+        assert.ok(data.photo.page.includes('commons.wikimedia.org'));
+        assert.ok(seen.some((u) => u.includes('commons.wikimedia.org')), '커먼즈를 먼저 물어봅니다');
+        assert.ok(!seen.some((u) => u.includes('image.pollinations.ai')), '사진이 있으면 AI 를 부르지 않습니다');
+      },
+    ),
+  );
+});
+
+test('generate-image: 실제 사진이 없으면 무료 AI 로 폴백하고 kind=ai 로 표시한다', async () => {
+  await withKey(null, () =>
+    withFetch(
+      async (url) => {
+        const u = String(url);
+        if (u.includes('commons.wikimedia.org') || u.includes('wikipedia.org')) return jsonRes({ batchcomplete: '' });
+        if (u.includes('image.pollinations.ai')) return binaryRes(jpegBytes(), 'image/jpeg', 200, { 'x-model-used': 'sana' });
+        return { ok: true, status: 200, headers: { get: () => 'text/event-stream' }, text: async () => 'event: error\ndata: null\n\n', json: async () => ({}) };
+      },
+      async () => {
+        const res = mockRes();
+        await imageHandler(
+          mockReq({ body: { prompt: 'Photoreal editorial photograph, unknown place, 9:16 vertical', style: 'real', photoKo: '없는장소' } }),
+          res,
+        );
+        const data = JSON.parse(res.body);
+        assert.equal(res.statusCode, 200);
+        assert.equal(data.kind, 'ai');
+        assert.equal(data.provider, 'pollinations-free');
+        assert.ok(data.attempts.some((a) => a.provider === 'real-photo'));
+      },
+    ),
+  );
+});
+
+test('generate-image: realPhoto:only 인데 사진이 없으면 404 no-real-photo (AI 로 속이지 않는다)', async () => {
+  await withKey(null, () =>
+    withFetch(
+      async () => jsonRes({ batchcomplete: '' }),
+      async () => {
+        const res = mockRes();
+        await imageHandler(mockReq({ body: { prompt: 'Photoreal photograph of nowhere, 9:16', style: 'real', photoKo: '없는장소', realPhoto: 'only' } }), res);
+        const data = JSON.parse(res.body);
+        assert.equal(res.statusCode, 404);
+        assert.equal(data.error, 'no-real-photo');
+        assert.equal(data.ok, false);
+      },
+    ),
+  );
+});

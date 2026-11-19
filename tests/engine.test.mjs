@@ -137,3 +137,80 @@ test('SRT 포맷', () => {
   assert.ok(srt.startsWith('1\n00:00:00,000 --> 00:00:02,800\n2028년에 판이 바뀝니다'));
   assert.ok(srt.includes('00:00:02,800 --> 00:00:07,100'));
 });
+
+/* ───────────────────── ⏱ 길이 선택 · 📷 사진 피사체 ───────────────────── */
+
+import { LENGTH_PRESETS, normalizeLength, resolveLength, beatPlan, photoSubject, MAX_CUTS } from '../lib/engine.js';
+
+test('normalizeLength: 15/30/45/60초 프리셋은 컷 수까지 정한다', () => {
+  assert.deepEqual(
+    LENGTH_PRESETS.map((p) => [p.sec, p.cuts]),
+    [
+      [15, 5],
+      [30, 8],
+      [45, 11],
+      [60, 15],
+    ],
+  );
+  assert.equal(normalizeLength(15).cuts, 5);
+  assert.equal(normalizeLength(45).cuts, 11);
+  assert.equal(normalizeLength(60).cuts, 15);
+  assert.equal(normalizeLength(60).preset, true);
+  // 값이 없으면 30초(8컷) 기본
+  assert.equal(normalizeLength(undefined).sec, 30);
+  // 예전 36초는 예전 규칙(7컷) 그대로 — 기존 대본과 호환
+  assert.equal(normalizeLength(36).cuts, 7);
+});
+
+test('resolveLength: 화면이 보낸 컷 수를 우선하고 범위를 지킨다', () => {
+  assert.equal(resolveLength(60, 15).cuts, 15);
+  assert.equal(resolveLength(30, 99).cuts, MAX_CUTS);
+  assert.equal(resolveLength(30, 1).cuts, 3);
+  assert.equal(resolveLength(45, 0).cuts, 11);
+});
+
+test('beatPlan: 컷 수마다 훅·맥락·포인트·반전·CTA 를 배분한다', () => {
+  assert.deepEqual(beatPlan(5), ['hook', 'setup', 'p1', 'twist', 'cta']);
+  assert.deepEqual(beatPlan(8), ['hook', 'setup', 'p1', 'p2', 'p3', 'p4', 'twist', 'cta']);
+  assert.equal(beatPlan(11).filter((b) => /^p\d+$/.test(b)).length, 7);
+  const big = beatPlan(15);
+  assert.equal(big.length, 15);
+  assert.equal(big[0], 'hook');
+  assert.equal(big[big.length - 1], 'cta');
+  assert.equal(big.filter((b) => b === 'twist').length, 1);
+  assert.equal(new Set(big).size, 15, '비트가 겹치지 않습니다');
+});
+
+test('photoSubject: 주제에서 실제 사진으로 찍을 수 있는 피사체를 뽑는다', () => {
+  assert.equal(photoSubject('롯데타워의 비밀'), '롯데타워');
+  assert.equal(photoSubject('롯데월드타워'), '롯데월드타워');
+  assert.ok(photoSubject('우리 동네 숨은 국밥집').includes('국밥집'));
+  assert.ok(photoSubject('강아지가 주인을 사랑하는 5가지 행동').length > 0);
+});
+
+test('generatePackage: 60초·15컷이면 15컷이 이어지고 총 길이가 60초 근처', () => {
+  const pkg = generatePackage({ topic: '롯데타워의 비밀', length: 60, cutCount: 15 });
+  assert.equal(pkg.cuts.length, 15);
+  assert.equal(pkg.meta.length, 60);
+  assert.equal(pkg.meta.cutCount, 15);
+  assert.ok(Math.abs(pkg.meta.totalSec - 60) <= 10, `총 길이 ${pkg.meta.totalSec}`);
+  for (let i = 1; i < pkg.cuts.length; i += 1) {
+    assert.equal(pkg.cuts[i].start, pkg.cuts[i - 1].end);
+    assert.ok(pkg.cuts[i].duration >= 1.5, `컷 ${i + 1} 길이 ${pkg.cuts[i].duration}`);
+  }
+  assert.equal(pkg.cuts[0].beat, 'hook');
+  assert.equal(pkg.cuts[14].beat, 'cta');
+  assert.ok(pkg.cuts[14].label.includes('마무리'));
+  assert.ok(pkg.cuts.every((c) => c.photoKo === '롯데타워'), '실제 사진 검색어가 컷마다 붙습니다');
+  assert.ok(pkg.cuts.every((c) => !/\{[TKRAN]\}/.test(c.narration)));
+  // 15컷이어도 포인트 문장이 매번 같지는 않습니다.
+  const points = pkg.cuts.slice(2, 12).map((c) => c.narration);
+  assert.ok(new Set(points).size >= 6, '포인트 문장이 반복되지 않습니다');
+});
+
+test('generatePackage: 15초·5컷은 짧게 끊는다', () => {
+  const pkg = generatePackage({ topic: '검단신도시 교통 호재', length: 15, cutCount: 5 });
+  assert.equal(pkg.cuts.length, 5);
+  assert.ok(Math.abs(pkg.meta.totalSec - 15) <= 6, `총 길이 ${pkg.meta.totalSec}`);
+  assert.equal(pkg.cuts[4].beat, 'cta');
+});
