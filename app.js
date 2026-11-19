@@ -330,7 +330,7 @@ function renderResult(analysis) {
           </div>
         </div>
       </div>
-      <p class="mt-3 text-[11px] text-slate-600">확인: ${escapeHtml(cut.factHint || '')}</p>
+      <p class="mt-3 text-[11px] text-slate-600">${escapeHtml(/^확인/.test(String(cut.factHint || '')) ? cut.factHint : `확인: ${cut.factHint || ''}`)}</p>
     `;
     list.appendChild(card);
   });
@@ -728,8 +728,8 @@ async function regenerateCutImage(index, failureNote = '') {
     const r = await requestCutImage(cut, { realPhoto: wantPhoto ? 'only' : 'skip' });
     if (r.ok) {
       setCutImageData(index, r.data);
-      const kind = r.data.kind === 'photo' ? '📷 실제 사진' : '🎨 AI 이미지';
-      toast(`Scene ${index + 1} — ${kind}으로 바꿨습니다.`);
+      const kind = r.data.kind === 'photo' ? '📷 실제 사진으로' : '🎨 AI 이미지로';
+      toast(`Scene ${index + 1} — ${kind} 바꿨습니다.`);
       refreshImageBadgeFromPkg();
       return;
     }
