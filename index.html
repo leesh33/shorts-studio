@@ -14,6 +14,7 @@
     <meta name="twitter:card" content="summary" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%238b5cf6'/%3E%3Cstop offset='1' stop-color='%232563eb'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='24' fill='%23090D19'/%3E%3Crect x='18' y='18' width='64' height='64' rx='16' fill='url(%23g)'/%3E%3Ctext x='50' y='66' font-size='38' text-anchor='middle' fill='white'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./ranking.css" />
   </head>
   <body class="min-h-screen bg-[#090D19] text-white antialiased">
     <div class="max-w-6xl mx-auto px-5 py-8 md:px-10">
@@ -34,6 +35,13 @@
         </div>
       </header>
 
+      <!-- Mode switch — 🎬 레퍼런스 리믹스(기존) | 🏆 TOP 5 랭킹 짜집기(신규) -->
+      <nav id="modeSwitch" class="rk-mode-switch" role="tablist" aria-label="TakeOne 모드 선택">
+        <button type="button" role="tab" data-mode="remix" aria-selected="true" class="rk-mode-tab is-on">🎬 레퍼런스 리믹스</button>
+        <button type="button" role="tab" data-mode="ranking" aria-selected="false" class="rk-mode-tab">🏆 TOP 5 랭킹 짜집기</button>
+      </nav>
+
+      <div id="remixMode">
       <!-- Hero -->
       <section class="text-center mb-10 md:mb-12">
         <div class="inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-violet-300 text-xs mb-6">
@@ -407,6 +415,101 @@
           </div>
         </div>
       </section>
+      </div>
+
+      <!-- 🏆 TOP 5 랭킹 짜집기 모드 -->
+      <section id="rankingMode" hidden>
+        <div class="rk-hero">
+          <span class="rk-eyebrow">🏆 RANKING MODE · TOP 5 → TOP 1</span>
+          <h2>TOP 5 랭킹<em> 짜집기</em></h2>
+          <p>
+            항목 5개를 넣고 클립을 올리면 <b class="text-slate-300">5위 → 1위</b> 순서로 이어 붙인 9:16 숏츠를 만듭니다.
+            유튜브 정보·자막은 참고용으로 가져오고, 클립은 직접 올린 파일만 씁니다.
+          </p>
+        </div>
+
+        <div class="rk-panel">
+          <div class="rk-topic-head">
+            <b>영상 제목 · 주제</b>
+            <span>이 한 줄이 1위까지 이어집니다</span>
+            <span id="rkAiBadge" class="rk-ai-badge">—</span>
+          </div>
+          <label class="rk-label">
+            주제
+            <input id="rkTopic" class="rk-input" type="text" maxlength="80" autocomplete="off" placeholder="예: 리트 만점자 발언 TOP 5" />
+          </label>
+          <div class="rk-ai-row">
+            <button id="rkAiBtn" type="button" class="rk-btn rk-btn-primary">✨ AI 랭킹 대본·코멘트 생성</button>
+            <label class="rk-check">
+              <input id="rkOverwrite" type="checkbox" />
+              직접 쓴 문장도 덮어쓰기
+            </label>
+          </div>
+          <p id="rkAiNote" class="rk-ai-note"></p>
+        </div>
+
+        <div id="rkSlots" class="rk-slots" style="margin-top: 14px"></div>
+
+        <div class="rk-panel rk-actions">
+          <button id="rkPreviewBtn" type="button" class="rk-btn rk-btn-primary">▶ 9:16 미리보기 (TOP 5 → TOP 1)</button>
+          <p id="rkSummary" class="rk-summary">—</p>
+        </div>
+
+        <section id="rkPlayerSection" class="rk-panel rk-player" hidden>
+          <div class="rk-player-head">
+            <div>
+              <h3>Live Ranking Preview</h3>
+              <p>순위 배지 · 제목 · 굵은 자막 · 클립이 5위부터 1위까지 이어집니다.</p>
+            </div>
+            <button id="rkClosePlayer" type="button" class="rk-btn rk-btn-ghost rk-close">접기</button>
+          </div>
+
+          <div class="rk-player-grid">
+            <div class="rk-phone-wrap">
+              <div id="rkPhone" class="rk-phone">
+                <div id="rkCardLayer" class="rk-layer"></div>
+                <div id="rkImageLayer" class="rk-layer"></div>
+                <div id="rkVideoLayer" class="rk-layer"></div>
+                <div class="rk-shade"></div>
+                <div id="rkSegments" class="rk-segments"></div>
+                <div class="rk-topline">
+                  <span id="rkBadge" class="rk-badge">TOP 5</span>
+                  <span id="rkCounter">1 / 5</span>
+                </div>
+                <div id="rkTitle" class="rk-title-text"></div>
+                <div id="rkBigRank" class="rk-big-rank">5</div>
+                <div id="rkCaption" class="rk-subtitle"></div>
+                <button id="rkPlayBig" type="button" class="rk-play-big" aria-label="재생">▶</button>
+              </div>
+
+              <div class="rk-controls">
+                <button id="rkPlayBtn" type="button" class="rk-btn">▶ 재생</button>
+                <button id="rkRestartBtn" type="button" class="rk-btn">↺ 처음</button>
+              </div>
+              <div id="rkVoice" class="rk-voice">
+                <button type="button" data-rkvoice="deep" class="rk-btn is-on" aria-pressed="true">중후한 남성 내레이션</button>
+                <button type="button" data-rkvoice="off" class="rk-btn" aria-pressed="false">음성 끄기</button>
+              </div>
+              <p id="rkPlayerNote" class="rk-note">음성은 재생할 때 서버 TTS로 준비합니다.</p>
+            </div>
+
+            <div class="rk-side">
+              <div class="rk-side-inner">
+                <p class="rk-side-title">RANKING ORDER · 5 → 1</p>
+                <div id="rkOrderList" class="rk-order"></div>
+                <button id="rkExportBtn" type="button" class="rk-btn rk-btn-gold rk-export">🎬 1080×1920 영상 내려받기 (MP4)</button>
+                <div class="rk-progress"><div id="rkExportFill"></div></div>
+                <p id="rkExportStatus" class="rk-export-status">아직 내보내지 않았습니다.</p>
+                <p class="rk-export-hint">
+                  브라우저에서 실시간으로 렌더합니다 — 클립 · 순위 배지 · 제목 · 자막 · 내레이션이 한 파일에 담깁니다.
+                  아이폰 사파리는 <b>720×1280</b>로 저장합니다(메모리 보호). 브라우저가 H.264 를 만들 수 없으면
+                  <b>MP4(VP9)</b> 또는 <b>WebM</b>으로 저장하고, 파일 이름·상태에 실제 형식을 그대로 적습니다.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
 
       <!-- Footer -->
       <footer class="text-center text-xs text-slate-600 mt-20 pb-8">
@@ -415,10 +518,13 @@
     </div>
 
     <!-- Toast -->
+    <div id="rkToast" class="rk-toast"><span id="rkToastText"></span></div>
+
     <div id="toast" class="fixed bottom-8 left-1/2 -translate-x-1/2 translate-y-4 opacity-0 pointer-events-none bg-[#252D42] border border-white/10 px-6 py-4 rounded-xl shadow-2xl text-sm text-white z-50 transition-all duration-200 w-max max-w-[88vw] text-center leading-relaxed">
       <span id="toastText"></span>
     </div>
 
     <script type="module" src="./app.js"></script>
+    <script type="module" src="./ranking.js"></script>
   </body>
 </html>

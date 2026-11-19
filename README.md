@@ -1,11 +1,13 @@
 # TakeOne(테이크원) — AI 쇼츠 스튜디오
 
 바이럴 쇼츠의 **성공 공식(Viral DNA)** 을 읽어서, 내 주제로 새 숏폼 **대본 + 컷별 AI 장면 + 9:16 영상 파일**까지 만드는 웹 앱.
+여기에 **🏆 TOP 5 랭킹 짜집기 모드**(TOP 5 → TOP 1 순위 영상)가 함께 들어 있습니다.
 
 - 라이브: https://shorts-studio-navy.vercel.app
-- 스택: 정적 HTML/Tailwind(빌드된 CSS 커밋) + Vercel Serverless Functions 6개
-  (`/api/analyze-and-generate` · `/api/generate-image` · `/api/find-video` · `/api/video-proxy` · `/api/tts` · `/api/health`)
-- 화면: **TakeOne** 디자인(#090D19 · violet→blue 그라데이션) 유지
+- 스택: 정적 HTML/Tailwind(빌드된 CSS 커밋) + Vercel Serverless Functions 7개
+  (`/api/analyze-and-generate` · `/api/analyze-ranking` · `/api/generate-image` · `/api/find-video` · `/api/video-proxy` · `/api/tts` · `/api/health`)
+- 화면: **TakeOne** 디자인(#090D19 · violet→blue 그라데이션) 유지 — 상단 탭으로 `🎬 레퍼런스 리믹스` ↔ `🏆 TOP 5 랭킹 짜집기`
+  를 오갑니다. 두 모드는 상태를 섞지 않습니다(리믹스 쪽은 app.js, 랭킹 쪽은 ranking.js).
 
 ## 화면 흐름
 
@@ -37,6 +39,38 @@
      컷 타임라인을 음성 길이에 맞춰 늘려(최대 14초/컷) 말이 잘리지 않습니다.
    - 한국어 Web Speech 음성(1.0~1.4배속·음소거), 컷별 진행 세그먼트·스크러빙, CUE SHEET,
      스크립트 복사 / `.srt` / 장면 프롬프트 / JSON 내보내기.
+
+## 🏆 TOP 5 랭킹 짜집기 모드
+
+`🏆 TOP 5 랭킹 짜집기` 탭(`?mode=ranking` 으로도 열립니다)은 **5위부터 1위까지 이어 붙인 랭킹 숏츠**를 만듭니다.
+레퍼런스 리믹스와 화면·상태를 공유하지 않으므로, 리믹스 모드는 예전과 똑같이 동작합니다.
+
+1. **영상 제목(주제)** 한 줄 + **5칸(TOP 5 → TOP 1)**.
+   - 칸마다 **유튜브 주소**(선택) — `🔎 정보` 를 누르면 제목·채널·길이·자동 자막을 가져오고,
+     자막에서 한 줄 코멘트 후보를 채웁니다. 자막이 막히면 **이유를 그 자리에 적고** 제목만으로 진행합니다.
+   - **클립 업로드**(`<input type="file" accept="video/*">`) — MP4 · MOV · WebM 을 브라우저에서 바로 씁니다.
+     파일은 서버로 올라가지 않고 `blob:` URL 로만 다뤄지며, 영상 프레임이 캔버스에 그대로 들어갑니다.
+   - 클립이 없으면 **대체 이미지** → 없으면 **순위 색 그라데이션 카드**로 나옵니다(빈칸도 영상이 됩니다).
+   - **제목 · 코멘트(자막 겸 내레이션)** 를 직접 고칠 수 있고, **시작초 / 길이(초)** 로 클립 구간을 자릅니다.
+2. **✨ AI 랭킹 대본·코멘트 생성** — `POST /api/analyze-ranking` 이 슬롯들의 유튜브 자막 발췌를 모아
+   Gemini 에게 5→1 코멘트를 쓰게 합니다. 키가 없거나 실패하면 **로컬 템플릿**으로 채우고,
+   결과 옆 배지가 `GEMINI · 모델명` / `로컬 템플릿` 중 무엇이 썼는지 그대로 보여 줍니다.
+   기본은 **직접 쓴 문장을 지키고 빈 칸만** 채웁니다(`직접 쓴 문장도 덮어쓰기` 체크박스로 바꿀 수 있음).
+3. **▶ 9:16 미리보기** — TOP 5 → TOP 4 → … → TOP 1 로 이어 재생합니다.
+   상단 진행 세그먼트, **순위 배지(TOP 1 은 금색)**, 제목, 하단 굵은 자막(`[ ]` 는 보라 강조),
+   실제 클립 재생, 그리고 `/api/tts` 의 `ko-KR-InJoonNeural` 내레이션이 함께 흐릅니다.
+4. **🎬 1080×1920 영상 내려받기** — 캔버스에 클립 프레임·배지·제목·자막·진행바를 그리고 내레이션을 같은
+   스트림에 섞어 `MediaRecorder` 로 실제 파일을 만듭니다. 컨테이너는 브라우저가 만들 수 있는 것 중
+   **H.264 MP4 → MP4(VP9) → WebM** 순서로 고르고, 파일 이름·상태 문구는 **실제 바이트로 확인한 형식**을 적습니다
+   (아이폰 사파리는 메모리 보호를 위해 720×1280).
+
+정직하게 말하는 것
+
+- **유튜브 영상 파일은 서버에서 내려받지 않습니다**(약관·서명 제한). 클립은 사용자가 올리는 것이 정답이고,
+  API 응답의 `clipDownload.available: false` 와 안내 문구가 그 사실을 매번 함께 보여 줍니다.
+- 자동 자막은 시도하되, 유튜브가 빈 응답을 주면 `transcriptNote` 에 이유를 남깁니다(가짜 자막 없음).
+- 로컬 템플릿 대본은 **제목을 다듬은 문장**입니다. 확인되지 않은 숫자·사실을 새로 만들지 않습니다.
+- 녹화 중 클립은 구간마다 한 번만 위치를 잡고 그대로 재생합니다(잦은 seek 는 프레임을 튀게 하고 렌더러를 불안정하게 만듭니다).
 
 ## 실제 동작 범위 (정직하게)
 
@@ -91,6 +125,20 @@ POST /api/find-video
 GET  /api/video-proxy?u=<https 원본> → 200/206 영상 바이트 (Range·Content-Range 그대로, 허용 호스트만)
 GET  /api/find-video     → { ok, hasPixabayKey, hasPexelsKey, providers, mediaHosts }   (키 값은 없음)
 GET  /api/health         → { ok, app, hasYoutubeKey, hasGeminiKey, hasPixabayKey, hasPexelsKey, geminiModel, imageModel, node }
+
+POST /api/analyze-ranking          (🏆 랭킹 모드)
+① { "mode": "slot", "rank": 3, "url": "https://youtube.com/shorts/ID" }
+→ { ok: true, rank, slot: { rank, videoId, url, title, channel, durationSec, thumbnail, transcript,
+     transcriptChars, transcriptNote, captionSuggestion, fetchedBy, attempts, notices }, clipDownload }
+   · 유튜브 페이지 → oEmbed → Data API(키가 있으면) 순서, 자동 자막은 있으면 채웁니다.
+   · 유튜브 주소가 아니면 400 { error: "not-youtube" }
+② { "mode": "script", "topic": "리트 만점자 발언 TOP 5",
+     "slots": [{ "rank": 5, "url": "…", "title": "…", "caption": "…" }, …] }
+→ { ok: true, mode: "gemini" | "template", gemini: { ok, model, ms, attempts, reason },
+    ranking: { hook, slots: [{ rank, title, caption }] },
+    sources, notices, clipDownload, ranks: [5,4,3,2,1] }
+   · 키가 없거나 형식이 깨지면 mode:"template" + notices 에 이유(숨기지 않음). 응답에 키는 절대 없습니다.
+GET  /api/analyze-ranking → { ok, ranks, engine, hasGeminiKey, clipDownload }   (키 값은 없음)
 ```
 
 환경변수(모두 선택, **키는 서버 전용 — 절대 `EXPO_PUBLIC_`·클라이언트 번들에 넣지 마세요**):
@@ -118,9 +166,13 @@ npm test             # 엔진·Gemini 정규화·무료 이미지 사다리·API
 ## 구조
 
 ```
-index.html                     TakeOne 화면 (Tailwind 클래스)
+index.html                     TakeOne 화면 (Tailwind 클래스) + 모드 탭 + 랭킹 모드 마크업
 styles.css                     빌드된 Tailwind CSS (커밋됨)
-app.js                         폼·진행률·DNA·씬 렌더·9:16 플레이어·AI 이미지·영상 내보내기
+ranking.css                    🏆 랭킹 모드 화면(카드·9:16 폰 프레임·내보내기 상태) — 손글씨 CSS, 기존 CSS 무수정
+app.js                         폼·진행률·DNA·씬 렌더·9:16 플레이어·AI 이미지·영상 내보내기 (레퍼런스 리믹스)
+ranking.js                     🏆 랭킹 모드 상태·클립 업로드·유튜브 정보·AI 대본·9:16 미리보기·MP4 내보내기
+lib/ranking.js                 랭킹 순위·타임라인·자막 줄바꿈·AI 응답 파싱·로컬 폴백·포맷 판별 (순수 함수)
+lib/youtube-meta.js            유튜브 메타데이터·자동 자막 수집(서버 전용, 실패 사유 기록)
 lib/engine.js                  URL 파싱 · 레퍼런스 분석 · 로컬 대본 생성 (순수 함수)
 lib/cut-edit.js                내레이션·자막 인라인 편집 규칙(음성 문장·TTS 캐시 키·편집 동기화)
 lib/gemini.js                  Gemini 프롬프트·응답 파싱·대본 정규화 (순수 함수)
@@ -131,6 +183,7 @@ lib/real-photo.js              실제 사진 검색(위키미디어 커먼즈 ·
 lib/stock-video.js             스톡 영상 검색(Pixabay · Pexels · 커먼즈) + 프록시 주소·허용 호스트
 lib/visual-style.js            실제 사진 / 3D 다이오라마 / 실사 시네마틱 프롬프트 언어
 api/analyze-and-generate.js    메타데이터 수집 + (Gemini) 분석·대본 + 폴백 + 스타일 적용
+api/analyze-ranking.js         🏆 슬롯 정보(제목·자막) + 랭킹 대본(Gemini → 로컬 폴백)
 api/generate-image.js          컷별 9:16 장면 — 실제 사진 우선, 없으면 AI
 api/find-video.js              컷별 움직이는 스톡 클립 — Pixabay → Pexels → 커먼즈
 api/video-proxy.js             스톡 영상 같은 출처 프록시(Range·호스트 허용 목록)
@@ -145,5 +198,6 @@ tests/visual-style.test.mjs    실제 사진/3D/실사 스타일 프롬프트·A
 tests/style-help.test.mjs      ⓘ 안내 툴팁 문구·토글 배선·빌드된 CSS 확인
 tests/real-photo.test.mjs      커먼즈·위키백과 검색·필터·프록시 테스트
 tests/stock-video.test.mjs     Pixabay·Pexels·커먼즈 영상 검색·선택·프록시 허용 목록 테스트
+tests/ranking.test.mjs         🏆 랭킹 순위·타임라인·자막·AI 파싱·폴백·/api/analyze-ranking 테스트
 tools/serve.mjs                로컬 미리보기 서버
 ```
