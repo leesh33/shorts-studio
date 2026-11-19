@@ -105,6 +105,10 @@
                 <span class="text-violet-400 ml-2">Cut Images</span>
               </label>
               <div class="grid grid-cols-2 gap-2">
+                <button type="button" data-style="video" class="col-span-2 px-3 py-3 rounded-xl text-xs font-bold border border-white/10 bg-white/5 text-slate-400 transition text-left">
+                  🎬 움직이는 영상 <span class="text-sky-300">(스톡 클립)</span>
+                  <span class="block mt-1 text-[10px] font-normal text-slate-500">실제로 움직이는 스톡 영상 클립 · 없으면 사진·AI</span>
+                </button>
                 <button type="button" data-style="real" class="col-span-2 px-3 py-3 rounded-xl text-xs font-bold border border-white/10 bg-white/5 text-slate-400 transition text-left">
                   📷 실제 사진 <span class="text-violet-300">(실사 우선)</span>
                   <span class="block mt-1 text-[10px] font-normal text-slate-500">실제 장소·사물 사진을 먼저 찾습니다 · 없으면 AI</span>
@@ -269,6 +273,8 @@
               <div class="mx-auto w-full max-w-[320px] md:max-w-none">
                 <div id="phone" class="relative w-full aspect-[9/16] rounded-[26px] overflow-hidden border border-white/15 bg-black shadow-2xl shadow-black/50">
                   <div id="sceneStack" class="absolute inset-0"></div>
+                  <div id="sceneVideoLayer" class="absolute inset-0 overflow-hidden"></div>
+                  <div id="sceneVideoShade" class="pointer-events-none absolute inset-0 opacity-0 transition-opacity" style="background: linear-gradient(to top, rgba(0,0,0,.5) 0%, rgba(0,0,0,.06) 42%, rgba(0,0,0,.28) 100%)"></div>
                   <div class="grain absolute inset-0 opacity-[0.16] mix-blend-overlay pointer-events-none"></div>
                   <div class="absolute inset-0 pointer-events-none" style="background: radial-gradient(120% 80% at 50% 40%, transparent 40%, rgba(0,0,0,.55) 100%)"></div>
 

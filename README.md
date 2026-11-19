@@ -3,14 +3,14 @@
 바이럴 쇼츠의 **성공 공식(Viral DNA)** 을 읽어서, 내 주제로 새 숏폼 **대본 + 컷별 AI 장면 + 9:16 영상 파일**까지 만드는 웹 앱.
 
 - 라이브: https://shorts-studio-navy.vercel.app
-- 스택: 정적 HTML/Tailwind(빌드된 CSS 커밋) + Vercel Serverless Functions 4개
-  (`/api/analyze-and-generate` · `/api/generate-image` · `/api/tts` · `/api/health`)
+- 스택: 정적 HTML/Tailwind(빌드된 CSS 커밋) + Vercel Serverless Functions 6개
+  (`/api/analyze-and-generate` · `/api/generate-image` · `/api/find-video` · `/api/video-proxy` · `/api/tts` · `/api/health`)
 - 화면: **TakeOne** 디자인(#090D19 · violet→blue 그라데이션) 유지
 
 ## 화면 흐름
 
 1. **Create Your Remix** — `01. Reference Video`(유튜브 숏츠 URL) + `02. Your New Topic`(한 줄)
-   + `03. Visual Style`(**📷 실제 사진(실사 우선)** / 🎨 3D 입체 렌더링(기본) / 🎥 실사 시네마틱)
+   + `03. Visual Style`(**🎬 움직이는 영상(스톡 클립)** / **📷 실제 사진(실사 우선)** / 🎨 3D 입체 렌더링(기본) / 🎥 실사 시네마틱)
    + `04. Video Length`(**15초(5컷) / 30초(8컷, 기본) / 45초(11컷) / 60초(15컷)**).
 2. **AI ANALYSIS ENGINE** — 실제 요청이 도는 동안 3단계 진행률.
 3. **Viral DNA Analysis** — 레퍼런스에서 읽은 `HOOK STRATEGY` / `AVG. CAPTION` / `RECOMMENDED PACE` + 근거(evidence).
@@ -47,6 +47,7 @@
 | 이미지 | **빌링 없이 무료로 동작합니다.** ① `GEMINI_API_KEY` 가 있으면 Gemini 이미지 모델을 먼저 시도하고(나중에 빌링을 켜면 자동으로 Gemini 결과가 쓰임), ② 429(무료 등급 이미지 한도 0)·404·장애면 **무료 제공자로 자동 폴백**합니다 — Pollinations(`image.pollinations.ai`, 실측 5초·`image/jpeg`·576×1024) → HF FLUX.1-schnell Space(실측 9초·`image/webp`·720×1280). ③ 바이트는 **서버에서** 받아 `data:` URL 로 돌려주므로 브라우저 캔버스가 오염되지 않고 🎬 영상 다운로드에 CORS 오류가 없습니다. ④ 익명 Pollinations 는 **IP당 45초에 1장**이라, 화면은 막힌 컷만 서버가 알려준 초만큼 쉬었다가 최대 4차까지 다시 보냅니다. 그래도 안 되면 컷별로 정직한 오류(`429 free-busy` + `retryAfterMs`)를 보여 줍니다 — 가짜 성공 없음. 무료 이미지에는 제공자 워터마크가 하단 1~2%에 작게 붙고, 플레이어·영상에서는 안전 영역(하단 5%)을 잘라 프레임 밖으로 보냅니다. 함수 응답 한도(4.5MB)를 넘는 이미지는 413 으로 알립니다. |
 | 영상 | 브라우저 안에서 실시간 렌더(약 대본 길이만큼 걸립니다). **중후한 남성 내레이션 오디오 트랙이 함께 들어갑니다**(음성 준비된 컷만; 나머지 컷은 무음). MediaRecorder WebM 은 길이 메타데이터(duration)를 파일에 쓰지 않아 일부 편집기에서 재생 시간이 ∞ 로 보일 수 있습니다(브라우저 재생·업로드는 정상). |
 | 음성 | **`/api/tts`** — Microsoft Edge 읽어주기 음성을 서버에서 MP3 로 만듭니다(API 키·결제 없음). `ko-KR-InJoonNeural`(pitch -10%, rate -8%) 이 기본 '중후한 남성'. 실패하면 화면이 브라우저 음성으로 조용히 폴백하고, 그 사실을 숨기지 않습니다. 무료 서비스라 예고 없이 막힐 수 있어 음성 실패 시에도 대본·자막·영상은 그대로 쓸 수 있습니다. |
+| 움직이는 영상 | **🎬 움직이는 영상(스톡 클립)** 스타일은 그림 대신 **실제로 움직이는 스톡 영상 클립**을 찾습니다(`lib/stock-video.js`). ① `PIXABAY_API_KEY` 가 있으면 Pixabay Videos(세로·HD mp4), ② `PEXELS_API_KEY` 가 있으면 Pexels Videos, ③ 키가 없거나 0건이면 **위키미디어 커먼즈 영상**(`filetype:video`, 720p 이하 webm 트랜스코드)을 씁니다. 클립이 없는 컷은 **실제 사진(켄번즈) → 무료 AI 이미지**로 채워 빈 화면을 남기지 않습니다. 영상 바이트는 `/api/video-proxy`(같은 출처·Range 지원·호스트 허용 목록)로 흘려보내 `<video>` 재생과 캔버스 `drawImage` 가 CORS 없이 동작하고, 9:16 미리보기·MP4/WebM 내보내기에 실제 움직이는 프레임이 들어갑니다. 카드에는 `🎬 영상` 배지와 출처가 붙고, `🔄 다른 클립`으로 컷마다 다시 고를 수 있습니다. |
 | 비주얼 스타일 | **📷 실제 사진(실사 우선)** · **3D 입체 렌더링**(기본) · 실사 시네마틱. 영어 장면 프롬프트에 다이오라마/등각 투시/GI 조명 또는 필름 스틸 언어를 입혀 무료 이미지 모델의 결과 톤을 바꿉니다(`lib/visual-style.js`). 반대 스타일 단어는 걷어내고, 같은 스타일을 두 번 입히지 않습니다. |
 
 ## API
@@ -78,7 +79,15 @@ POST /api/tts
 
 GET  /api/tts              → { ok, engine, voices, limits }
 GET  /api/generate-image → { ok, hasGeminiKey, models, imagens, freeProviders, visualStyles }   (키 값은 없음)
-GET  /api/health         → { ok, app, hasYoutubeKey, hasGeminiKey, geminiModel, imageModel, node }
+POST /api/find-video
+{ "photoKo": "롯데월드타워", "photoEn": "Lotte World Tower", "cutIndex": 2, "exclude": ["pixabay:125"] }
+→ { ok: true, kind: "video", videoUrl: "/api/video-proxy?u=…", posterUrl?, provider, providerLabel,
+    videoId, title, page, license, artist, duration, width, height, credit, attempts, ms }
+  · provider: "pixabay" | "pexels" | "wikimedia-commons"
+  · 클립이 없으면 404 { ok:false, error:"no-video" } — 화면이 실제 사진 → AI 로 폴백
+GET  /api/video-proxy?u=<https 원본> → 200/206 영상 바이트 (Range·Content-Range 그대로, 허용 호스트만)
+GET  /api/find-video     → { ok, hasPixabayKey, hasPexelsKey, providers, mediaHosts }   (키 값은 없음)
+GET  /api/health         → { ok, app, hasYoutubeKey, hasGeminiKey, hasPixabayKey, hasPexelsKey, geminiModel, imageModel, node }
 ```
 
 환경변수(모두 선택, **키는 서버 전용 — 절대 `EXPO_PUBLIC_`·클라이언트 번들에 넣지 마세요**):
@@ -89,6 +98,8 @@ GET  /api/health         → { ok, app, hasYoutubeKey, hasGeminiKey, geminiModel
 | `GEMINI_MODEL` | 대본 모델 고정(기본: `gemini-2.5-flash-lite` → `gemini-2.5-flash` → `gemini-3.5-flash-lite` → `gemini-2.0-flash` 순 시도) |
 | `GEMINI_IMAGE_MODEL` | 이미지 모델 고정(기본: `gemini-2.5-flash-image` 계열 → `imagen-3.0-generate-002`) |
 | `YOUTUBE_API_KEY` | 있으면 Data API 로 메타데이터를 한 번 더 보강 |
+| `PIXABAY_API_KEY` | 🎬 움직이는 영상 1순위(Pixabay Videos). 무료 키 발급: https://pixabay.com/api/docs/ |
+| `PEXELS_API_KEY` | 있으면 Pixabay 다음 2순위(Pexels Videos). Pexels 는 신규 키 발급을 잠시 멈춰 두었습니다. |
 
 키는 `x-goog-api-key` 헤더로만 나가고 응답·로그에 담지 않습니다. 응답에는 모델명·상태 코드·짧은 사유만 남습니다.
 
@@ -114,9 +125,12 @@ lib/gemini-api.js              Gemini REST 호출(모델·입력모드 사다리
 lib/free-image.js              무료 이미지 사다리(Pollinations · HF FLUX) + 이미지 판별
 lib/tts.js                     중후한 남성 TTS(Edge 읽어주기) · 문장 정리 · 캐시
 lib/real-photo.js              실제 사진 검색(위키미디어 커먼즈 · 위키백과) + data URL 프록시
+lib/stock-video.js             스톡 영상 검색(Pixabay · Pexels · 커먼즈) + 프록시 주소·허용 호스트
 lib/visual-style.js            실제 사진 / 3D 다이오라마 / 실사 시네마틱 프롬프트 언어
 api/analyze-and-generate.js    메타데이터 수집 + (Gemini) 분석·대본 + 폴백 + 스타일 적용
 api/generate-image.js          컷별 9:16 장면 — 실제 사진 우선, 없으면 AI
+api/find-video.js              컷별 움직이는 스톡 클립 — Pixabay → Pexels → 커먼즈
+api/video-proxy.js             스톡 영상 같은 출처 프록시(Range·호스트 허용 목록)
 api/tts.js                     컷 내레이션 MP3
 api/health.js                  배포 확인 (키 유무만)
 tests/engine.test.mjs          로컬 엔진 테스트
@@ -126,5 +140,6 @@ tests/api.test.mjs             API 핸들러 테스트(네트워크 스텁, 키 
 tests/tts.test.mjs             TTS 문장 정리·캐시·실패 처리
 tests/visual-style.test.mjs    실제 사진/3D/실사 스타일 프롬프트·API 반영
 tests/real-photo.test.mjs      커먼즈·위키백과 검색·필터·프록시 테스트
+tests/stock-video.test.mjs     Pixabay·Pexels·커먼즈 영상 검색·선택·프록시 허용 목록 테스트
 tools/serve.mjs                로컬 미리보기 서버
 ```

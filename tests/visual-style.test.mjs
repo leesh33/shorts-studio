@@ -78,9 +78,11 @@ test('normalizeStyle: 모르는 값·빈 값은 기본 3D 로', () => {
   assert.equal(normalizeStyle('없는스타일'), '3d');
   assert.equal(normalizeStyle(null), '3d');
   assert.equal(styleFor('cinematic').label, '실사 시네마틱');
-  assert.equal(styleCatalog().length, 3);
+  assert.equal(styleCatalog().length, 4);
   assert.equal(normalizeStyle('real'), 'real');
+  assert.equal(normalizeStyle('video'), 'video');
   assert.ok(styleCatalog().some((s) => s.id === 'real' && s.kind === 'photo'));
+  assert.ok(styleCatalog().some((s) => s.id === 'video' && s.kind === 'video'));
 });
 
 test('enhanceImagePrompt: 3D 스타일은 포토리얼 언어를 걷어내고 다이오라마 언어를 붙인다', () => {

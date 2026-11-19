@@ -34,6 +34,7 @@ const state = {
 
 /** 화면 토글과 요청 본문이 같은 이름을 쓰도록 한 곳에 모읍니다(서버 lib/visual-style.js 와 짝). */
 const VISUAL_STYLES = {
+  video: { label: '움직이는 영상', emoji: '🎬' },
   real: { label: '실제 사진', emoji: '📷' },
   '3d': { label: '3D 입체 렌더링', emoji: '🎨' },
   cinematic: { label: '실사 시네마틱', emoji: '🎥' },
@@ -70,6 +71,11 @@ const ai = { running: false, done: 0, failed: 0, error: '', providers: {}, round
 const AI_MAX_ROUNDS = 4;
 /* 영상 내보내기 상태 */
 const exporter = { running: false, recorder: null, cancelled: false };
+
+/** 9:16 플레이어에 붙은 컷별 <video> — 미리보기와 내보내기가 같은 요소를 씁니다. */
+const cutVideos = new Map();
+/** 내보내기용 로드 상태 — index → 'loading' | 'ready' | 'failed' */
+const videoLoad = new Map();
 
 const player = {
   playing: false,
@@ -503,12 +509,14 @@ function updateAiBanner() {
   }
   if (state.hasGeminiKey === false) {
     banner.className = 'mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-[11px] leading-relaxed text-slate-400';
-    if (title) title.textContent = state.visualStyle === 'real' ? '📷 실제 사진 모드 — 빌링 없이 동작합니다.' : '무료 모드 — 빌링 없이 동작합니다.';
+    if (title) title.textContent = state.visualStyle === 'video' ? '🎬 움직이는 영상 모드 — 빌링 없이 동작합니다.' : state.visualStyle === 'real' ? '📷 실제 사진 모드 — 빌링 없이 동작합니다.' : '무료 모드 — 빌링 없이 동작합니다.';
     if (body) {
       body.textContent =
-        state.visualStyle === 'real'
-          ? '컷마다 실제 장소·사물 사진을 위키미디어 커먼즈(라이선스 표기 포함)에서 먼저 찾습니다. 사진이 없는 컷만 무료 AI(Pollinations · FLUX.1-schnell)로 채웁니다. 서버가 이미지를 받아 data URL 로 넘기므로 영상 다운로드에 CORS 오류가 없습니다.'
-          : 'GEMINI_API_KEY 가 없어도 컷별 9:16 장면을 무료 제공자(Pollinations · FLUX.1-schnell)로 만듭니다. 서버가 이미지 바이트를 받아 data URL 로 넘기므로 영상 다운로드에 CORS 오류가 없습니다.';
+        state.visualStyle === 'video'
+          ? '컷마다 실제로 움직이는 스톡 영상 클립을 먼저 찾습니다(Pexels는 키가 있을 때, 없으면 위키미디어 커먼즈 영상 · 라이선스 표기 포함). 클립이 없는 컷은 실제 사진(켄번즈) → AI 이미지로 채웁니다. 영상은 같은 출처 프록시(/api/video-proxy)로 흘려보내므로 미리보기 재생과 영상 파일 합성에 CORS 오류가 없습니다.'
+          : state.visualStyle === 'real'
+            ? '컷마다 실제 장소·사물 사진을 위키미디어 커먼즈(라이선스 표기 포함)에서 먼저 찾습니다. 사진이 없는 컷만 무료 AI(Pollinations · FLUX.1-schnell)로 채웁니다. 서버가 이미지를 받아 data URL 로 넘기므로 영상 다운로드에 CORS 오류가 없습니다.'
+            : 'GEMINI_API_KEY 가 없어도 컷별 9:16 장면을 무료 제공자(Pollinations · FLUX.1-schnell)로 만듭니다. 서버가 이미지 바이트를 받아 data URL 로 넘기므로 영상 다운로드에 CORS 오류가 없습니다.';
     }
     banner.classList.remove('hidden');
     return;
@@ -534,22 +542,30 @@ function setToolStatus(text, ratio) {
 function applyCutImage(index) {
   const pkg = state.pkg;
   const cut = pkg?.cuts?.[index];
-  if (!cut || !cut.imageUrl) return;
+  if (!cut) return;
+  // 영상 클립이 있으면 포스터가 없어도 장면은 채워진 것입니다(그라데이션 배경 위에 영상이 올라감).
+  if (!cut.imageUrl && !cut.videoUrl) return;
 
   const scene = $('#sceneStack')?.children?.[index];
   if (scene) {
-    scene.style.backgroundImage = `linear-gradient(rgba(0,0,0,.22), rgba(0,0,0,.45)), url("${cut.imageUrl}")`;
+    scene.style.backgroundImage = cut.imageUrl
+      ? `linear-gradient(rgba(0,0,0,.22), rgba(0,0,0,.45)), url("${cut.imageUrl}")`
+      : `linear-gradient(155deg, ${cut.mood?.from || '#101014'} 0%, ${cut.mood?.to || '#2A3340'} 100%)`;
   }
   const slot = document.querySelector(`[data-shot="${index}"]`);
   if (slot) {
-    slot.classList.remove('hidden');
-    const img = slot.querySelector('img');
-    if (img && img.getAttribute('src') !== cut.imageUrl) img.src = cut.imageUrl;
+    if (cut.imageUrl) {
+      slot.classList.remove('hidden');
+      const img = slot.querySelector('img');
+      if (img && img.getAttribute('src') !== cut.imageUrl) img.src = cut.imageUrl;
+    } else {
+      slot.classList.add('hidden');
+    }
   }
   paintCutImageMeta(index);
 }
 
-/** 컷 카드의 📷 실사 / 🎨 AI 배지 · 사진 출처 · 다시 만들기 버튼 문구. */
+/** 컷 카드의 🎬 영상 / 📷 실사 / 🎨 AI 배지 · 출처 · 다시 만들기 버튼 문구. */
 function paintCutImageMeta(index) {
   const cut = state.pkg?.cuts?.[index];
   const card = cardOf(index);
@@ -557,32 +573,39 @@ function paintCutImageMeta(index) {
   const badge = card.querySelector(`[data-kind="${index}"]`);
   const credit = card.querySelector(`[data-credit="${index}"]`);
   const regen = card.querySelector(`[data-regen="${index}"]`);
+  const kind = cutVisualKind(cut);
+  const videoMode = state.visualStyle === 'video';
   if (regen) {
     const canPhoto = state.visualStyle === 'real';
-    if (!cut.imageUrl) regen.textContent = canPhoto ? '📷 실제 사진 찾기' : '🔄 이 컷 장면 다시';
-    else if (cut.imageKind === 'photo') regen.textContent = '🎨 AI로 바꾸기';
-    else regen.textContent = canPhoto ? '📷 실사로 바꾸기' : '🔄 다시 만들기';
+    if (!kind) regen.textContent = videoMode ? '🎬 영상 클립 찾기' : canPhoto ? '📷 실제 사진 찾기' : '🔄 이 컷 장면 다시';
+    else if (kind === 'video') regen.textContent = '🔄 다른 클립';
+    else if (kind === 'photo') regen.textContent = videoMode ? '🎬 영상으로 바꾸기' : '🎨 AI로 바꾸기';
+    else regen.textContent = videoMode ? '🎬 영상으로 바꾸기' : canPhoto ? '📷 실사로 바꾸기' : '🔄 다시 만들기';
   }
-  if (!cut.imageUrl) {
+  if (!kind) {
     badge?.classList.add('hidden');
     credit?.classList.add('hidden');
     return;
   }
-  const isPhoto = cut.imageKind === 'photo';
   if (badge) {
-    badge.textContent = isPhoto ? '📷 실사' : '🎨 AI';
-    badge.className = `text-[10px] font-bold px-2 py-1 rounded-full border ${
-      isPhoto
-        ? 'text-emerald-300 border-emerald-400/30 bg-emerald-400/10'
-        : 'text-violet-300 border-violet-400/30 bg-violet-400/10'
-    }`;
-    badge.title = isPhoto
-      ? `실제 사진 · ${providerName(cut.imageProvider)}${cut.imagePhoto?.license ? ` · ${cut.imagePhoto.license}` : ''}`
-      : `AI 생성 · ${providerName(cut.imageProvider)}`;
+    const table = {
+      video: { text: '🎬 영상', cls: 'text-sky-300 border-sky-400/30 bg-sky-400/10' },
+      photo: { text: '📷 실사', cls: 'text-emerald-300 border-emerald-400/30 bg-emerald-400/10' },
+      ai: { text: '🎨 AI', cls: 'text-violet-300 border-violet-400/30 bg-violet-400/10' },
+    };
+    const looked = table[kind] || table.ai;
+    badge.textContent = looked.text;
+    badge.className = `text-[10px] font-bold px-2 py-1 rounded-full border ${looked.cls}`;
+    badge.title =
+      kind === 'video'
+        ? `움직이는 스톡 클립 · ${providerName(cut.videoProvider)}${cut.videoLicense ? ` · ${cut.videoLicense}` : ''}`
+        : kind === 'photo'
+          ? `실제 사진 · ${providerName(cut.imageProvider)}${cut.imagePhoto?.license ? ` · ${cut.imagePhoto.license}` : ''}`
+          : `AI 생성 · ${providerName(cut.imageProvider)}`;
     badge.classList.remove('hidden');
   }
   if (credit) {
-    const text = isPhoto && cut.imageCredit ? cut.imageCredit : '';
+    const text = kind === 'video' ? cut.videoCredit || '' : kind === 'photo' ? cut.imageCredit || '' : '';
     credit.textContent = text;
     credit.title = text;
     credit.classList.toggle('hidden', !text);
@@ -590,7 +613,7 @@ function paintCutImageMeta(index) {
 }
 
 /** 이미지 응답 하나를 컷 상태에 반영합니다(사진이면 출처도 함께). */
-function setCutImageData(index, data) {
+function setCutImageData(index, data, { styleUsed = '' } = {}) {
   const cut = state.pkg?.cuts?.[index];
   if (!cut || !data?.image) return;
   cut.imageUrl = data.image;
@@ -599,13 +622,55 @@ function setCutImageData(index, data) {
   cut.imageKind = data.kind === 'photo' ? 'photo' : 'ai';
   cut.imageCredit = data.photo?.credit || data.credit || '';
   cut.imagePhoto = data.photo || null;
+  cut.imageStyleUsed = styleUsed || data.visualStyle || state.visualStyle;
+  cut.imageNote = data.geminiNote && /사진 없음/.test(String(data.geminiNote)) ? '영상 클립·실제 사진을 못 찾아 AI로 채웠습니다.' : '';
   applyCutImage(index);
+}
+
+/** 움직이는 영상 클립 응답을 컷 상태에 반영합니다(출처·포스터도 함께). */
+function setCutVideoData(index, data) {
+  const cut = state.pkg?.cuts?.[index];
+  if (!cut || !data?.videoUrl) return;
+  cut.videoUrl = data.videoUrl;
+  cut.videoSourceUrl = data.sourceUrl || '';
+  cut.videoId = data.videoId || '';
+  cut.videoProvider = data.provider || '';
+  cut.videoPage = data.page || '';
+  cut.videoTitle = data.title || '';
+  cut.videoLicense = data.license || '';
+  cut.videoArtist = data.artist || '';
+  cut.videoCredit = data.credit || '';
+  cut.videoDuration = Number(data.duration) || 0;
+  cut.videoWidth = Number(data.width) || 0;
+  cut.videoHeight = Number(data.height) || 0;
+  cut.imageKind = 'video';
+  cut.imageProvider = data.provider || '';
+  cut.imageCredit = data.credit || '';
+  cut.imageNote = '';
+  // 포스터(첫 프레임)는 카드 썸네일·영상 로딩 중 배경으로 씁니다.
+  if (data.posterUrl && !cut.imageUrl) cut.imageUrl = data.posterUrl;
+  applyCutImage(index);
+  if (state.playerOpen && cut.videoUrl) mountCutVideo(index);
+}
+
+/** 컷에 화면에 뿌릴 장면(영상·사진·AI 이미지)이 있는지 */
+function cutHasVisual(cut) {
+  return Boolean(cut && (cut.videoUrl || cut.imageUrl));
+}
+
+/** 컷이 지금 어떤 장면으로 채워졌는지 — 'video' | 'photo' | 'ai' | '' */
+function cutVisualKind(cut) {
+  if (!cut) return '';
+  if (cut.videoUrl) return 'video';
+  if (cut.imageKind === 'photo') return 'photo';
+  if (cut.imageUrl) return 'ai';
+  return '';
 }
 
 function applyAllCutImages() {
   if (!state.pkg) return;
   state.pkg.cuts.forEach((cut, i) => {
-    if (cut.imageUrl) applyCutImage(i);
+    if (cutHasVisual(cut)) applyCutImage(i);
   });
   refreshImageBadgeFromPkg();
 }
@@ -614,12 +679,26 @@ function applyAllCutImages() {
 function refreshImageBadgeFromPkg() {
   if (!state.pkg || ai.running) return;
   const total = state.pkg.cuts.length;
-  const made = state.pkg.cuts.filter((c) => c.imageUrl).length;
-  const photos = state.pkg.cuts.filter((c) => c.imageKind === 'photo').length;
-  const mix = photos ? `📷 실사 ${photos}컷${photos < made ? ` · 🎨 AI ${made - photos}컷` : ''}` : '무료 AI';
+  const made = state.pkg.cuts.filter((c) => cutHasVisual(c)).length;
+  const videos = state.pkg.cuts.filter((c) => c.videoUrl).length;
+  const photos = state.pkg.cuts.filter((c) => !c.videoUrl && c.imageKind === 'photo').length;
+  const aiCount = made - videos - photos;
+  const parts = [];
+  if (videos) parts.push(`🎬 영상 ${videos}컷`);
+  if (photos) parts.push(`📷 실사 ${photos}컷`);
+  if (aiCount > 0) parts.push(`🎨 AI ${aiCount}컷`);
+  const mix = parts.join(' · ') || '무료 AI';
   if (made === total) paintImageBadge(`장면 완료 · ${made}/${total} (${mix})`, 'ok');
   else if (made > 0) paintImageBadge(`장면 · ${made}/${total} 완료 (${mix})`, 'ok');
-  else paintImageBadge(state.visualStyle === 'real' ? `📷 실제 사진 · 0/${total} 준비됨` : `무료 AI 이미지 · 0/${total} 준비됨`, 'ok');
+  else
+    paintImageBadge(
+      state.visualStyle === 'video'
+        ? `🎬 스톡 영상 · 0/${total} 준비됨`
+        : state.visualStyle === 'real'
+          ? `📷 실제 사진 · 0/${total} 준비됨`
+          : `무료 AI 이미지 · 0/${total} 준비됨`,
+      'ok',
+    );
 }
 
 function sleep(ms) {
@@ -630,6 +709,7 @@ function providerName(provider) {
   if (provider === 'gemini') return 'Gemini';
   if (provider === 'hf-flux-free') return 'FLUX.1-schnell 무료';
   if (provider === 'pollinations-free') return 'Pollinations 무료';
+  if (provider === 'pexels') return 'Pexels 스톡 영상';
   if (provider === 'wikimedia-commons') return '위키미디어 커먼즈';
   if (provider === 'wikipedia-ko') return '위키백과';
   if (provider === 'wikipedia-en') return 'Wikipedia (EN)';
@@ -670,8 +750,10 @@ function paintImageBadge(text, tone = 'ok') {
 }
 
 /** 컷 1장 요청 — 서버가 실제 사진·무료 AI 경로까지 시도한 결과를 정직하게 해석합니다. */
-async function requestCutImage(cut, { realPhoto = 'first' } = {}) {
+async function requestCutImage(cut, { realPhoto = 'first', styleOverride = '' } = {}) {
   const index = Number(cut.index) || 0;
+  // 요청 스타일 — 영상 모드에서 폴백할 때는 'real'(실제 사진 → AI)
+  const style = styleOverride || state.visualStyle;
   // 같은 주제로 컷마다 다른 사진이 나오도록, 이미 쓴 사진 제목을 보내 뺀다.
   const exclude = (state.pkg?.cuts || [])
     .filter((c) => c !== cut && c.imageKind === 'photo' && c.imagePhoto?.title)
@@ -686,8 +768,8 @@ async function requestCutImage(cut, { realPhoto = 'first' } = {}) {
         aspectRatio: '9:16',
         cutId: cut.id,
         cutIndex: index,
-        style: state.visualStyle,
-        realPhoto: state.visualStyle === 'real' ? realPhoto : 'skip',
+        style,
+        realPhoto: style === 'real' ? realPhoto : 'skip',
         photoKo: cut.photoKo || '',
         photoEn: cut.photoEn || '',
         keyword: cut.photoKo || '',
@@ -713,21 +795,100 @@ async function requestCutImage(cut, { realPhoto = 'first' } = {}) {
   }
 }
 
-/** 컷 하나만 다시 만들기 — 📷 실사 ↔ 🎨 AI 토글도 이 버튼으로 합니다. */
-async function regenerateCutImage(index, failureNote = '') {
+/** 컷 1개 스톡 영상 클립 요청 — 같은 출처 프록시 주소를 돌려받습니다. */
+async function requestCutVideo(cut, { avoidCurrent = false } = {}) {
+  const index = Number(cut.index) || 0;
+  // 같은 클립이 두 컷에 겹치지 않도록 이미 쓴 클립 id 를 빼고 묻습니다.
+  const exclude = (state.pkg?.cuts || [])
+    .filter((c) => c !== cut && c.videoId)
+    .map((c) => c.videoId)
+    .slice(0, 40);
+  if (avoidCurrent && cut.videoId) exclude.push(cut.videoId);
+  try {
+    const res = await fetch('/api/find-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        photoKo: cut.photoKo || '',
+        photoEn: cut.photoEn || '',
+        keyword: cut.photoKo || '',
+        fallbackPhoto: state.pkg?.meta?.photoSubject || '',
+        fallbackPhotoEn: state.pkg?.meta?.photoSubjectEn || '',
+        cutId: cut.id,
+        cutIndex: index,
+        exclude,
+      }),
+    });
+    const data = await res.json().catch(() => null);
+    if (data?.ok && data.videoUrl) return { ok: true, data };
+    return {
+      ok: false,
+      error: String(data?.error || `http-${res.status}`),
+      message: String(data?.message || `HTTP ${res.status}`),
+    };
+  } catch (err) {
+    return { ok: false, error: 'network', message: String(err?.message || err) };
+  }
+}
+
+/**
+ * 🎬 영상 모드에서 한 컷을 채웁니다 — 클립 → 실제 사진 → (사진도 없으면 서버가 AI).
+ *   한 컷이 실패해도 빈 화면을 남기지 않고, 무엇으로 채웠는지 그대로 알려 줍니다.
+ */
+async function fillCutWithVideo(cut, index) {
+  const video = await requestCutVideo(cut);
+  if (video.ok) {
+    setCutVideoData(index, video.data);
+    return { ok: true, kind: 'video', data: video.data };
+  }
+  const photo = await requestCutImage(cut, { styleOverride: 'real' });
+  if (photo.ok) {
+    setCutImageData(index, photo.data, { styleUsed: 'real' });
+    return { ok: true, kind: photo.data.kind === 'photo' ? 'photo' : 'ai', data: photo.data, videoError: video };
+  }
+  return {
+    ok: false,
+    kind: '',
+    error: photo.error,
+    message: photo.message,
+    retryable: photo.retryable,
+    retryAfterMs: photo.retryAfterMs,
+    videoError: video,
+  };
+}
+
+/** 컷 하나만 다시 만들기 — 🎬 영상 ↔ 📷 실사 ↔ 🎨 AI 토글도 이 버튼으로 합니다. */
+async function regenerateCutVisual(index, failureNote = '') {
   const cut = state.pkg?.cuts?.[index];
   if (!cut || ai.running) return;
-  const wantPhoto = state.visualStyle === 'real' && cut.imageKind !== 'photo';
+  const videoMode = state.visualStyle === 'video';
+  const wantPhoto = !videoMode && state.visualStyle === 'real' && cut.imageKind !== 'photo';
   const btn = cardOf(index)?.querySelector(`[data-regen="${index}"]`);
   if (btn) {
     btn.disabled = true;
-    btn.textContent = wantPhoto ? '📷 사진 찾는 중…' : '🎨 만드는 중…';
+    btn.textContent = videoMode ? '🎬 클립 찾는 중…' : wantPhoto ? '📷 사진 찾는 중…' : '🎨 만드는 중…';
   }
   ai.running = true;
   try {
+    if (videoMode) {
+      const r = await fillCutWithVideo(cut, index);
+      if (r.ok) {
+        toast(
+          r.kind === 'video'
+            ? `Scene ${index + 1} — 🎬 움직이는 클립으로 바꿨습니다.`
+            : r.kind === 'photo'
+              ? `Scene ${index + 1} — 이 컷은 클립을 찾지 못해 📷 실제 사진으로 채웠습니다.`
+              : `Scene ${index + 1} — 클립·사진을 못 찾아 🎨 AI 이미지로 채웠습니다.`,
+        );
+        refreshImageBadgeFromPkg();
+        return;
+      }
+      toast(failureNote ? `${failureNote} ${r.message || ''}` : r.message || '이 컷 장면을 채우지 못했습니다.');
+      return;
+    }
     const r = await requestCutImage(cut, { realPhoto: wantPhoto ? 'only' : 'skip' });
     if (r.ok) {
-      setCutImageData(index, r.data);
+      setCutImageData(index, r.data, { styleUsed: state.visualStyle });
       const kind = r.data.kind === 'photo' ? '📷 실제 사진으로' : '🎨 AI 이미지로';
       toast(`Scene ${index + 1} — ${kind} 바꿨습니다.`);
       refreshImageBadgeFromPkg();
@@ -747,14 +908,15 @@ async function generateCutImages() {
   if (ai.running) return;
 
   const cuts = state.pkg.cuts;
-  let pending = cuts.map((cut, i) => ({ cut, i })).filter((x) => !x.cut.imageUrl);
+  let pending = cuts.map((cut, i) => ({ cut, i, skipVideo: false })).filter((x) => !cutHasVisual(x.cut));
   if (!pending.length) {
-    toast('이미 모든 컷의 장면 이미지가 있습니다.');
+    toast('이미 모든 컷의 장면이 있습니다.');
     return;
   }
 
+  const videoMode = state.visualStyle === 'video';
   const photoMode = state.visualStyle === 'real';
-  const label = photoMode ? '📷 실제 사진' : '무료 AI 이미지';
+  const label = videoMode ? '🎬 스톡 영상' : photoMode ? '📷 실제 사진' : '무료 AI 이미지';
   ai.running = true;
   ai.providers = {};
   ai.rounds = 0;
@@ -764,11 +926,18 @@ async function generateCutImages() {
   ai.error = '';
   const btn = $('#genImagesBtn');
   if (btn) btn.disabled = true;
-  const remaining = () => cuts.filter((c) => !c.imageUrl).length;
+  const remaining = () => cuts.filter((c) => !cutHasVisual(c)).length;
   const startedAt = Date.now();
-  // 실제 사진은 커먼즈/위키백과라 컷마다 다른 사진을 고르게 하려면 한 장씩 묻는 편이 좋습니다.
-  // (동시에 보내면 같은 사진이 두 컷에 들어가고, 몰리면 429 를 받습니다.)
-  const waveLimit = photoMode ? 1 : 999;
+  // 실제 촬영물(영상·사진)은 컷마다 다른 장면을 고르게 하려면 한 건씩 묻는 편이 좋습니다.
+  // (동시에 보내면 같은 클립이 두 컷에 들어가고, 몰리면 429 를 받습니다.)
+  const waveLimit = videoMode || photoMode ? 1 : 999;
+
+  const paintProgress = (done, extra = '') => {
+    const who = providerSummary();
+    const text = `${label} 생성 중 · ${done}/${cuts.length} 완료${who ? ` (${who})` : ''}${extra}`;
+    setToolStatus(text, done / cuts.length);
+    paintImageBadge(`${label} 생성 중 · ${done}/${cuts.length} 완료`, 'busy');
+  };
 
   setToolStatus(`${label} 생성 중 · ${ai.done}/${cuts.length} 완료`, ai.done / cuts.length);
   paintImageBadge(`${label} 생성 중 · ${ai.done}/${cuts.length} 완료`, 'busy');
@@ -782,23 +951,23 @@ async function generateCutImages() {
 
     for (let at = 0; at < wave.length; at += waveLimit) {
       const part = wave.slice(at, at + waveLimit);
-      if (photoMode && at > 0) await sleep(300);
+      if ((videoMode || photoMode) && at > 0) await sleep(300);
       await Promise.all(
-        part.map(async ({ cut, i }) => {
-          const r = await requestCutImage(cut);
+        part.map(async ({ cut, i, skipVideo }) => {
+          const r =
+            videoMode && !skipVideo ? await fillCutWithVideo(cut, i) : await requestCutImage(cut, { styleOverride: videoMode ? 'real' : '' });
           if (r.ok) {
-            setCutImageData(i, r.data);
-            ai.providers[cut.imageProvider] = (ai.providers[cut.imageProvider] || 0) + 1;
+            if (!videoMode || skipVideo) setCutImageData(i, r.data, { styleUsed: videoMode ? 'real' : state.visualStyle });
+            const key = cut.videoUrl ? cut.videoProvider : cut.imageProvider;
+            ai.providers[key || 'free'] = (ai.providers[key || 'free'] || 0) + 1;
             ai.done = cuts.length - remaining();
-            const done = `${ai.done}/${cuts.length} 완료`;
-            const who = providerSummary();
-            setToolStatus(`${label} 생성 중 · ${done}${who ? ` (${who})` : ''}`, ai.done / cuts.length);
-            paintImageBadge(`${label} 생성 중 · ${done}`, 'busy');
+            paintProgress(ai.done);
             return;
           }
           ai.error = r.message || r.error;
           if (r.retryable) {
-            pending.push({ cut, i });
+            // 영상 검색은 이미 실패했으니, 재시도는 사진·AI 경로로만 합니다.
+            pending.push({ cut, i, skipVideo: true });
             waitMs = Math.max(waitMs, Number(r.retryAfterMs) || 0);
           } else {
             ai.failed += 1;
@@ -820,18 +989,25 @@ async function generateCutImages() {
 
   const total = cuts.length;
   const made = total - remaining();
-  const who = providerSummary();
   const took = Math.round((Date.now() - startedAt) / 1000);
-  const photoCount = cuts.filter((c) => c.imageKind === 'photo').length;
+  const videoCount = cuts.filter((c) => c.videoUrl).length;
+  const photoCount = cuts.filter((c) => !c.videoUrl && c.imageKind === 'photo').length;
+  const aiCount = Math.max(0, made - videoCount - photoCount);
+  const kinds = [];
+  if (videoCount) kinds.push(`🎬 영상 ${videoCount}컷`);
+  if (photoCount) kinds.push(`📷 실사 ${photoCount}컷`);
+  if (aiCount) kinds.push(`🎨 AI ${aiCount}컷`);
+  const mix = kinds.join(' · ') || '장면 없음';
 
   if (!remaining()) {
-    const mix = photoCount ? `📷 실사 ${photoCount}컷${photoCount < total ? ` · 🎨 AI ${total - photoCount}컷` : ''}` : `🎨 AI ${total}컷`;
     setToolStatus(`장면 ${made}개 완료 (${took}초 · ${mix}) — 플레이어에 반영했습니다.`, 1);
     paintImageBadge(`장면 완료 · ${made}/${total} (${mix})`, 'ok');
     toast(
-      photoCount
-        ? `컷별 장면을 채웠습니다 — 실제 사진 ${photoCount}컷${photoCount < total ? `, AI ${total - photoCount}컷` : ''}.`
-        : '컷별 AI 장면을 무료 생성해 플레이어에 입혔습니다.',
+      videoCount
+        ? `컷별 장면을 채웠습니다 — 움직이는 영상 ${videoCount}컷${photoCount ? `, 실제 사진 ${photoCount}컷` : ''}${aiCount ? `, AI ${aiCount}컷` : ''}.`
+        : photoCount
+          ? `컷별 장면을 채웠습니다 — 실제 사진 ${photoCount}컷${aiCount ? `, AI ${aiCount}컷` : ''}.`
+          : '컷별 AI 장면을 무료 생성해 플레이어에 입혔습니다.',
     );
     setTimeout(() => setToolStatus('', 0), 6000);
     return;
@@ -845,6 +1021,7 @@ async function generateCutImages() {
   toast(`${made}/${total}컷 완료 — 남은 ${left}컷은 잠시 뒤 버튼으로 다시 시도해 주세요.`);
   updateAiBanner();
 }
+
 
 /* ───────────────────── 🎙 내레이션 (중후한 남성 TTS) ───────────────────── */
 
@@ -1114,9 +1291,11 @@ function setVisualStyle(name) {
   state.visualStyle = name;
   paintStyleToggle();
   const note =
-    name === 'real'
-      ? '📷 실제 사진 — 실제 장소·사물 사진을 먼저 찾습니다. 대본을 다시 생성하면 컷마다 검색어(photoKo·photoEn)도 함께 만들어집니다.'
-      : `${VISUAL_STYLES[name].emoji} ${VISUAL_STYLES[name].label} 스타일로 새로 만듭니다 — 대본을 다시 생성해 주세요.`;
+    name === 'video'
+      ? '🎬 움직이는 영상 — 실제 스톡 영상 클립(Pexels → 위키미디어 커먼즈)을 먼저 찾습니다. 클립이 없으면 실제 사진, 그다음 AI로 채웁니다. 대본을 다시 생성하면 컷마다 검색어(photoKo·photoEn)도 함께 만들어집니다.'
+      : name === 'real'
+        ? '📷 실제 사진 — 실제 장소·사물 사진을 먼저 찾습니다. 대본을 다시 생성하면 컷마다 검색어(photoKo·photoEn)도 함께 만들어집니다.'
+        : `${VISUAL_STYLES[name].emoji} ${VISUAL_STYLES[name].label} 스타일로 새로 만듭니다 — 대본을 다시 생성해 주세요.`;
   toast(note);
   if (state.pkg) state.pkg.cuts.forEach((_, i) => paintCutImageMeta(i));
 }
@@ -1126,20 +1305,29 @@ function paintStyleToggle() {
     const on = btn.dataset.style === state.visualStyle;
     btn.className = `px-3 py-3 rounded-xl text-xs font-bold border transition text-left ${
       on ? 'bg-violet-500/15 border-violet-400/50 text-violet-100' : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-200'
-    }${btn.dataset.style === 'real' ? ' col-span-2' : ''}`;
+    }${btn.dataset.style === 'real' || btn.dataset.style === 'video' ? ' col-span-2' : ''}`;
     btn.setAttribute('aria-pressed', String(on));
   });
   const note = $('#styleNote');
   if (note) {
     note.textContent =
-      state.visualStyle === 'real'
-        ? '실제 장소·사물 사진을 먼저 찾습니다(위키미디어 커먼즈 → 위키백과). 롯데타워 같은 실제 대상이 그대로 나오고, 사진이 없는 컷만 AI로 채웁니다.'
-        : state.visualStyle === '3d'
-          ? '미니어처 다이오라마 · 등각 투시 · GI 조명 — 3D 쇼츠 느낌의 컷 이미지를 만듭니다.'
-          : '필름 스틸 · 자연광 · 얕은 심도 — 실사 다큐 느낌의 컷 이미지를 만듭니다.';
+      state.visualStyle === 'video'
+        ? '실제로 움직이는 스톡 클립을 먼저 찾습니다(Pexels → 위키미디어 커먼즈). 클립이 없는 컷은 실제 사진(켄번즈) → AI 이미지로 채우고, 9:16 미리보기·영상 파일에서 장면이 실제로 움직입니다.'
+        : state.visualStyle === 'real'
+          ? '실제 장소·사물 사진을 먼저 찾습니다(위키미디어 커먼즈 → 위키백과). 롯데타워 같은 실제 대상이 그대로 나오고, 사진이 없는 컷만 AI로 채웁니다.'
+          : state.visualStyle === '3d'
+            ? '미니어처 다이오라마 · 등각 투시 · GI 조명 — 3D 쇼츠 느낌의 컷 이미지를 만듭니다.'
+            : '필름 스틸 · 자연광 · 얕은 심도 — 실사 다큐 느낌의 컷 이미지를 만듭니다.';
   }
   const genBtn = $('#genImagesBtn');
-  if (genBtn) genBtn.textContent = state.visualStyle === 'real' ? '📷 컷별 실제 사진 채우기' : '🎨 컷별 AI 이미지 생성';
+  if (genBtn) {
+    genBtn.textContent =
+      state.visualStyle === 'video'
+        ? '🎬 컷별 영상 클립 채우기'
+        : state.visualStyle === 'real'
+          ? '📷 컷별 실제 사진 채우기'
+          : '🎨 컷별 AI 이미지 생성';
+  }
   updateAiBanner();
 }
 
@@ -1325,6 +1513,106 @@ function drawSubtitle(ctx, text, width, y, fontSize, lineHeight) {
   });
 }
 
+/** 움직이는 클립 한 프레임 — 9:16 을 꽉 채우도록 자릅니다(cover). */
+function drawVideoCover(ctx, video, W, H) {
+  const vw = Number(video.videoWidth) || 0;
+  const vh = Number(video.videoHeight) || 0;
+  if (!vw || !vh) return false;
+  const scale = Math.max(W / vw, H / vh);
+  const dw = vw * scale;
+  const dh = vh * scale;
+  try {
+    ctx.drawImage(video, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    return true;
+  } catch {
+    // 디코더가 아직 프레임을 못 줬습니다 — 다음 프레임에서 다시 시도합니다.
+    return false;
+  }
+}
+
+/**
+ * 내보내기 전에 모든 클립을 미리 받아 둡니다 — 컷 중간에 검은 화면이 뜨지 않게.
+ *   · 3개씩 병렬(모바일 메모리·대역폭 보호), URL 당 12초 한도.
+ *   · 준비된 클립만 map 에 담아 돌려줍니다 — 못 받은 컷은 포스터·켄번즈로 그립니다.
+ */
+async function prepareCutVideos({ perCutMs = 12_000 } = {}) {
+  const ready = new Map();
+  const todo = (state.pkg?.cuts || []).map((cut, i) => ({ cut, i })).filter((x) => x.cut.videoUrl);
+  if (!todo.length) return ready;
+  for (let at = 0; at < todo.length; at += 3) {
+    const part = todo.slice(at, at + 3);
+    setToolStatus(`영상 클립 준비 중… ${Math.min(todo.length, at)}/${todo.length}`, 0.05);
+    await Promise.all(
+      part.map(async ({ i }) => {
+        const video = mountCutVideo(i);
+        if (!video) return;
+        const ok = await waitForVideo(video, perCutMs);
+        videoLoad.set(i, ok ? 'ready' : 'failed');
+        if (ok) ready.set(i, video);
+      }),
+    );
+  }
+  const missing = todo.length - ready.size;
+  if (missing > 0) toast(`영상 클립 ${missing}컷을 준비하지 못해 포스터·사진으로 대신 그렸습니다.`);
+  return ready;
+}
+
+/** <video> 가 첫 프레임을 그릴 수 있을 때까지(또는 한도까지) 기다립니다. */
+function waitForVideo(video, timeoutMs = 12_000) {
+  if (video.readyState >= 2 && video.videoWidth) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      video.removeEventListener('loadeddata', onLoad);
+      video.removeEventListener('error', onErr);
+      resolve(ok);
+    };
+    const onLoad = () => finish(video.readyState >= 2 && Boolean(video.videoWidth));
+    const onErr = () => finish(false);
+    const timer = setTimeout(() => finish(false), Math.max(2000, timeoutMs));
+    video.addEventListener('loadeddata', onLoad);
+    video.addEventListener('error', onErr);
+    try {
+      video.load?.();
+    } catch {
+      /* noop */
+    }
+  });
+}
+
+/** 녹화 중 클립 재생 위치를 컷 타임라인에 맞춥니다. */
+function syncExportVideos(t, videos) {
+  if (!videos || !videos.size) return;
+  const cuts = state.pkg.cuts;
+  const idx = Math.min(cuts.length - 1, cutIndexAt(t));
+  const cut = cuts[idx];
+  cutVideos.forEach((video, i) => {
+    if (i === idx) return;
+    try {
+      video.pause();
+    } catch {
+      /* noop */
+    }
+  });
+  const video = videos.get(idx);
+  if (!video) return;
+  const want = clipTimeFor(video, cut, Math.max(0, t - cut.start));
+  if (Math.abs((Number(video.currentTime) || 0) - want) > 0.35) {
+    try {
+      video.currentTime = want;
+    } catch {
+      /* noop */
+    }
+  }
+  if (video.paused) {
+    const p = video.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  }
+}
+
 function drawGradientScene(ctx, cut, W, H) {
   const g = ctx.createLinearGradient(0, 0, W * 0.6, H);
   g.addColorStop(0, cut.mood?.from || '#101014');
@@ -1362,7 +1650,7 @@ function drawKenBurnsImage(ctx, img, cut, local, idx, W, H) {
   ctx.drawImage(img, 0, 0, sw, sh, dx, dy, dw, dh);
 }
 
-function drawVideoFrame(ctx, t, images, W, H) {
+function drawVideoFrame(ctx, t, images, W, H, videos = null) {
   const pkg = state.pkg;
   const cuts = pkg.cuts;
   const idx = Math.min(cuts.length - 1, cutIndexAt(t));
@@ -1372,7 +1660,10 @@ function drawVideoFrame(ctx, t, images, W, H) {
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#0B1020';
   ctx.fillRect(0, 0, W, H);
-  if (images[idx]) drawKenBurnsImage(ctx, images[idx], cut, local, idx, W, H);
+  // 🎬 움직이는 클립이 우선 — 재생 중인 프레임을 그대로 그립니다.
+  const video = videos && typeof videos.get === 'function' ? videos.get(idx) : null;
+  if (video && video.readyState >= 2 && video.videoWidth) drawVideoCover(ctx, video, W, H);
+  else if (images[idx]) drawKenBurnsImage(ctx, images[idx], cut, local, idx, W, H);
   else drawGradientScene(ctx, cut, W, H);
 
   // 가독성용 그라데이션 + 비네트
@@ -1465,8 +1756,8 @@ async function exportVideo() {
   }
 
   const btn = $('#downloadVideoBtn');
-  const hasImages = state.pkg.cuts.some((c) => c.imageUrl);
-  if (!hasImages) toast('아직 AI 장면이 없어 그라데이션 장면으로 렌더합니다. 🎨 버튼으로 장면을 먼저 만들면 더 좋습니다.');
+  const hasImages = state.pkg.cuts.some((c) => cutHasVisual(c));
+  if (!hasImages) toast('아직 장면이 없어 그라데이션 장면으로 렌더합니다. 🎬 버튼으로 장면을 먼저 만들면 더 좋습니다.');
 
   pause();
   exporter.running = true;
@@ -1491,6 +1782,9 @@ async function exportVideo() {
 
     setToolStatus(`장면 이미지 준비 중… (약 ${Math.round(total)}초 실시간 렌더)`, 0);
     const images = await Promise.all(state.pkg.cuts.map((c) => loadImage(c.imageUrl)));
+    // 🎬 움직이는 클립은 미리 다 받아 둔 뒤, 녹화 중에는 재생 프레임을 캔버스에 그립니다.
+    const videos = await prepareCutVideos();
+    if (exporter.cancelled) throw new Error('rendering-cancelled');
 
     /* ② 캔버스 영상 + 내레이션 오디오를 한 스트림으로 */
     const stream = canvas.captureStream(30);
@@ -1518,7 +1812,8 @@ async function exportVideo() {
     });
 
     // 첫 프레임을 먼저 그려 두면 녹화 시작이 검은 화면으로 잡히지 않습니다.
-    drawVideoFrame(ctx, 0, images, W, H);
+    syncExportVideos(0, videos);
+    drawVideoFrame(ctx, 0, images, W, H, videos);
     recorder.start(250);
 
     /* ③ 컷마다 내레이션을 정확한 시각에 예약합니다(A/V 동기). */
@@ -1547,7 +1842,8 @@ async function exportVideo() {
     await new Promise((resolve) => {
       const step = () => {
         const t = Math.min(total, clockNow());
-        drawVideoFrame(ctx, t, images, W, H);
+        syncExportVideos(t, videos);
+        drawVideoFrame(ctx, t, images, W, H, videos);
         const audioNote = withAudio ? ` · 음성 ${withAudio}/${state.pkg.cuts.length}` : ' · 음성 없음';
         setToolStatus(`영상 렌더링 ${Math.round((t / total) * 100)}% · ${t.toFixed(1)}/${total.toFixed(1)}초${audioNote}`, t / total);
         if (exporter.cancelled || t >= total) {
@@ -1566,6 +1862,7 @@ async function exportVideo() {
         /* 이미 끝났습니다 */
       }
     });
+    pauseCutVideos();
     stream.getAudioTracks().forEach((track) => track.stop());
 
     recorder.stop();
@@ -1695,7 +1992,156 @@ function camMove(idx) {
   return set[idx % set.length];
 }
 
+/* ───────────── 🎬 컷별 영상 클립 재생 (미리보기·내보내기 공용) ───────────── */
+
+function videoLayer() {
+  return $('#sceneVideoLayer');
+}
+
+/** 영상 레이어를 비우고 <video> 핸들을 초기화합니다(플레이어를 다시 만들 때). */
+function resetCutVideos() {
+  cutVideos.forEach((video) => {
+    try {
+      video.pause();
+    } catch {
+      /* noop */
+    }
+    video.removeAttribute('src');
+    video.remove?.();
+  });
+  cutVideos.clear();
+  videoLoad.clear();
+  const layer = videoLayer();
+  if (layer) layer.innerHTML = '';
+}
+
+/**
+ * 컷 index 의 <video> 를 만들어 둡니다(이미 있으면 재사용).
+ *   · muted + playsinline — 아이폰에서도 소리 없이 자동 재생됩니다.
+ *   · 표시만 opacity 로 바꿉니다(display:none 이면 일부 브라우저가 프레임을 그리지 않아
+ *     캔버스 drawImage 가 빈 화면이 됩니다).
+ */
+function mountCutVideo(index) {
+  const cut = state.pkg?.cuts?.[index];
+  const layer = videoLayer();
+  if (!cut?.videoUrl || !layer) return null;
+  let video = cutVideos.get(index);
+  if (!video) {
+    video = document.createElement('video');
+    video.className = 'scene-video absolute inset-0 h-full w-full object-cover';
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.setAttribute('webkit-playsinline', '');
+    video.setAttribute('muted', '');
+    video.setAttribute('aria-hidden', 'true');
+    video.loop = true;
+    video.preload = 'metadata';
+    video.style.opacity = '0';
+    video.addEventListener('loadeddata', () => videoLoad.set(index, 'ready'));
+    video.addEventListener('error', () => videoLoad.set(index, 'failed'));
+    layer.appendChild(video);
+    cutVideos.set(index, video);
+  }
+  if (video.dataset.src !== cut.videoUrl) {
+    video.dataset.src = cut.videoUrl;
+    video.src = cut.videoUrl;
+    videoLoad.set(index, 'loading');
+    try {
+      video.load();
+    } catch {
+      /* noop */
+    }
+  }
+  return video;
+}
+
+/** 반복 재생 클립의 현재 위치 — 컷 안에서 흐른 시간을 클립 길이로 감쌉니다. */
+function clipTimeFor(video, cut, local) {
+  const dur = Number(video?.duration) || Number(cut?.videoDuration) || 0;
+  if (!dur || !Number.isFinite(dur)) return Math.max(0, local);
+  return Math.max(0, local) % dur;
+}
+
+/** 컷 전환 — 그 컷의 클립만 보이게 하고, 처음부터(또는 이어서) 재생합니다. */
+function activateCutVideo(index, local = 0, playing = player.playing) {
+  cutVideos.forEach((video, i) => {
+    if (i === index) return;
+    try {
+      video.pause();
+    } catch {
+      /* noop */
+    }
+    video.style.opacity = '0';
+  });
+  const shade = $('#sceneVideoShade');
+  const cut = state.pkg?.cuts?.[index];
+  const video = cut?.videoUrl ? mountCutVideo(index) : null;
+  if (!video) {
+    if (shade) shade.style.opacity = '0';
+    return false;
+  }
+  video.style.opacity = '1';
+  if (shade) shade.style.opacity = '1';
+  const want = clipTimeFor(video, cut, local);
+  if (Math.abs((Number(video.currentTime) || 0) - want) > 0.4) {
+    try {
+      video.currentTime = want;
+    } catch {
+      /* 메타데이터 전이면 무시 */
+    }
+  }
+  if (playing) {
+    const p = video.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } else {
+    try {
+      video.pause();
+    } catch {
+      /* noop */
+    }
+  }
+  return true;
+}
+
+/** 재생 중 드리프트 보정 — 클립이 컷 타임라인과 어긋나면 살짝 당깁니다. */
+function syncCutVideo(index, local) {
+  const video = cutVideos.get(index);
+  if (!video || video.style.opacity !== '1') return;
+  if (!player.playing) return;
+  const cut = state.pkg?.cuts?.[index];
+  const want = clipTimeFor(video, cut, local);
+  const cur = Number(video.currentTime) || 0;
+  const dur = Number(video.duration) || 0;
+  // 되감김(루프 경계)은 정상이므로 큰 차이만 보정합니다.
+  const gap = Math.min(Math.abs(cur - want), dur ? Math.abs(Math.abs(cur - want) - dur) : Infinity);
+  if (gap > 0.8) {
+    try {
+      video.currentTime = want;
+    } catch {
+      /* noop */
+    }
+  }
+  if (video.paused) {
+    const p = video.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  }
+}
+
+/** 모든 클립 정지 — 일시정지·플레이어 닫기·내보내기 시작에서 부릅니다. */
+function pauseCutVideos() {
+  cutVideos.forEach((video) => {
+    try {
+      video.pause();
+    } catch {
+      /* noop */
+    }
+  });
+}
+
 function buildPlayer() {
+  resetCutVideos();
   const pkg = state.pkg;
   if (!pkg) return;
   const stack = $('#sceneStack');
@@ -1779,6 +2225,8 @@ function updateFrame(force = false) {
     const scale = move.s0 + (move.s1 - move.s0) * local;
     scene.style.transform = `translate3d(${move.x * local}%, ${move.y * local}%, 0) scale(${scale})`;
   }
+  // 움직이는 클립은 켄번즈 대신 실제 재생 위치를 컷 타임라인에 맞춥니다.
+  syncCutVideo(idx, Math.max(0, player.t - cut.start));
   [...$('#segments').children].forEach((seg, i) => {
     const c = pkg.cuts[i];
     const p = player.t <= c.start ? 0 : player.t >= c.end ? 1 : (player.t - c.start) / (c.end - c.start);
@@ -1794,6 +2242,8 @@ function onCutEnter(idx) {
   $('#bigWord').textContent = cut.bigWord || '';
   player.beatIdx = -1;
   [...$('#sceneStack').children].forEach((s, i) => s.classList.toggle('is-active', i === idx));
+  // 🎬 이 컷에 영상 클립이 있으면 그 클립만 보이게 하고 이어서 재생합니다.
+  activateCutVideo(idx, Math.max(0, player.t - cut.start));
   if (player.playing && !player.mute) {
     const offset = Math.max(0, player.t - cut.start);
     if (!playNarration(idx, offset)) speak(cut);
@@ -1923,6 +2373,7 @@ function frame(now) {
 function pause() {
   player.playing = false;
   cancelAnimationFrame(player.raf);
+  pauseCutVideos();
   $('#bigPlay')?.classList.remove('opacity-0', 'pointer-events-none');
   const btn = $('#playBtn');
   if (btn) btn.textContent = '▶ 재생';
@@ -1996,7 +2447,8 @@ function closePlayer() {
 function scriptText() {
   const pkg = state.pkg;
   const bp = state.blueprint || {};
-  const photos = pkg.cuts.filter((c) => c.imageKind === 'photo' && c.imageCredit);
+  const photos = pkg.cuts.filter((c) => !c.videoUrl && c.imageKind === 'photo' && c.imageCredit);
+  const clips = pkg.cuts.filter((c) => c.videoUrl);
   const head = [
     `# ${bp.source?.title ? `${pkg.meta.topic} (${bp.source.title.slice(0, 40)} 리믹스)` : pkg.meta.topic}`,
     `총 ${Math.round(pkg.meta.totalSec)}초 · ${pkg.cuts.length}컷 · 템포 ${pkg.tts.rate}x · ${pkg.meta.strategyLabel}`,
@@ -2007,11 +2459,15 @@ function scriptText() {
     (c) =>
       `[${c.index + 1}] ${clock(c.start)}-${clock(c.end)} · ${c.label}\n내레이션: ${c.narration || stripMarkup(c.subtitle)}\n자막: ${c.subtitle}\n연출: ${c.visualKo}\n카메라: ${c.camera}\n`,
   );
-  // 실사 사진은 라이선스 표기가 필요합니다 — 영상 설명에 붙여넣을 수 있게 함께 내보냅니다.
-  const credits = photos.length
+  // 실사 사진·스톡 영상은 라이선스 표기가 필요합니다 — 영상 설명에 붙여넣을 수 있게 함께 내보냅니다.
+  const credits = photos.length || clips.length
     ? [
         '',
-        '[사진 출처 — 영상 설명에 함께 적어 주세요]',
+        '[장면 출처 — 영상 설명에 함께 적어 주세요]',
+        ...clips.map(
+          (c) =>
+            `Scene ${c.index + 1}: ${c.videoCredit || providerName(c.videoProvider)}${c.videoPage ? ` (${c.videoPage})` : ''}`,
+        ),
         ...photos.map((c) => `Scene ${c.index + 1}: ${c.imageCredit}${c.imagePhoto?.page ? ` (${c.imagePhoto.page})` : ''}`),
       ]
     : [];
@@ -2082,7 +2538,7 @@ function bind() {
     const btn = event.target.closest('[data-regen]');
     if (!btn) return;
     event.preventDefault();
-    regenerateCutImage(Number(btn.dataset.regen));
+    regenerateCutVisual(Number(btn.dataset.regen));
   });
   scenes.addEventListener('focusout', (event) => {
     const field = event.target.closest('[data-edit]');

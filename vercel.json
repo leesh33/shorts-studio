@@ -6,6 +6,8 @@
   "functions": {
     "api/analyze-and-generate.js": { "maxDuration": 45 },
     "api/generate-image.js": { "maxDuration": 60 },
+    "api/find-video.js": { "maxDuration": 30 },
+    "api/video-proxy.js": { "maxDuration": 60 },
     "api/tts.js": { "maxDuration": 30 },
     "api/health.js": { "maxDuration": 10 }
   },
