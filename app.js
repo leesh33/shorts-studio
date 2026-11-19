@@ -334,6 +334,8 @@ function renderResult(analysis) {
     `;
     list.appendChild(card);
   });
+  // 카드의 장면 배지·다시 만들기 문구를 지금 스타일에 맞춥니다(실제 사진이면 '📷 실제 사진 찾기').
+  pkg.cuts.forEach((_, i) => paintCutImageMeta(i));
 }
 
 function highlight(text) {  // [강조] 표기를 보라색 굵게
@@ -764,8 +766,9 @@ async function generateCutImages() {
   if (btn) btn.disabled = true;
   const remaining = () => cuts.filter((c) => !c.imageUrl).length;
   const startedAt = Date.now();
-  // 실제 사진은 커먼즈/위키백과라 빠르지만, 한꺼번에 몰리면 429 를 받습니다 — 2컷씩 천천히.
-  const waveLimit = photoMode ? 2 : 999;
+  // 실제 사진은 커먼즈/위키백과라 컷마다 다른 사진을 고르게 하려면 한 장씩 묻는 편이 좋습니다.
+  // (동시에 보내면 같은 사진이 두 컷에 들어가고, 몰리면 429 를 받습니다.)
+  const waveLimit = photoMode ? 1 : 999;
 
   setToolStatus(`${label} 생성 중 · ${ai.done}/${cuts.length} 완료`, ai.done / cuts.length);
   paintImageBadge(`${label} 생성 중 · ${ai.done}/${cuts.length} 완료`, 'busy');
