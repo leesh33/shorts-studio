@@ -271,7 +271,7 @@ function renderResult(analysis) {
             rows="3"
             spellcheck="false"
             aria-label="Scene ${i + 1} 내레이션 (음성으로 읽는 대사)"
-            class="edit-field block w-full resize-y min-h-[5.5rem] bg-[#0F1526] border border-white/10 rounded-lg px-3 py-2 text-sm leading-6 text-slate-200 outline-none focus:border-violet-500 focus:bg-[#121A2E] transition"
+            class="edit-field block w-full resize-y min-h-[5.5rem] bg-[#0F1526] border border-white/10 rounded-lg px-3 py-2 text-base sm:text-sm leading-6 text-slate-200 outline-none focus:border-violet-500 focus:bg-[#121A2E] transition"
           >${escapeHtml(cut.narration ?? stripMarkup(cut.subtitle))}</textarea>
           <div class="flex items-center justify-between gap-2 mb-2 mt-4">
             <p class="text-xs text-sky-300 font-bold">💬 자막 · 화면</p>
@@ -283,7 +283,7 @@ function renderResult(analysis) {
             rows="2"
             spellcheck="false"
             aria-label="Scene ${i + 1} 자막 (화면에 뜨는 글자)"
-            class="edit-field block w-full resize-y min-h-[3.5rem] bg-[#0F1526] border border-white/10 rounded-lg px-3 py-2 text-sm leading-6 text-slate-200 outline-none focus:border-violet-500 focus:bg-[#121A2E] transition"
+            class="edit-field block w-full resize-y min-h-[3.5rem] bg-[#0F1526] border border-white/10 rounded-lg px-3 py-2 text-base sm:text-sm leading-6 text-slate-200 outline-none focus:border-violet-500 focus:bg-[#121A2E] transition"
           >${escapeHtml(cut.subtitle)}</textarea>
           <p data-preview="${i}" class="mt-3 min-h-[1.25rem] border-l-2 border-violet-500/30 pl-2 text-xs leading-5 text-slate-400 break-keep">${highlight(cut.subtitle)}</p>
           <p class="mt-1 text-[10px] leading-5 text-slate-600">[강조] 로 감싼 말은 화면에서 보라색 · 고치면 9:16 미리보기·음성·자막 파일에 바로 반영됩니다.</p>
