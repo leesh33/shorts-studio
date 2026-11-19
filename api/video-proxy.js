@@ -59,7 +59,7 @@ export default async function handler(req, res) {
   const range = String(req.headers?.range || '');
   const headers = {
     'User-Agent': VIDEO_UA,
-    Accept: 'video/webm,video/mp4,video/*;q=0.9,*/*;q=0.5',
+    Accept: 'video/webm,video/mp4,video/*;q=0.9,image/*;q=0.8,*/*;q=0.5',
     ...(range ? { Range: range } : {}),
   };
 
@@ -84,7 +84,8 @@ export default async function handler(req, res) {
   }
 
   const type = String(upstream.headers.get('content-type') || '');
-  if (!/^(video|application\/octet-stream)/i.test(type)) {
+  // 영상 클립과 그 포스터(첫 프레임 jpg) 둘 다 이 프록시를 지나갑니다.
+  if (!/^(video\/|image\/(jpeg|png|webp)|application\/octet-stream)/i.test(type)) {
     return send(res, 502, { ok: false, error: 'not-a-video', type: type.slice(0, 60) });
   }
 
