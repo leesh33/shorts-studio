@@ -291,7 +291,7 @@ function renderResult(analysis) {
         <span data-time="${i}" class="shrink-0 text-xs text-slate-400 bg-white/5 px-3 py-2 rounded-full">${clock(cut.start)} - ${clock(cut.end)}</span>
       </div>
       <div class="grid md:grid-cols-2 gap-4">
-        <div class="bg-[#0B1020] rounded-xl p-5">
+        <div class="min-w-0 bg-[#0B1020] rounded-xl p-5">
           <div class="flex items-center justify-between gap-2 mb-2">
             <p class="text-xs text-violet-400 font-bold">🎙 내레이션 · 음성</p>
             <span data-count="narration" class="shrink-0 text-[10px] text-slate-500">${stats.narration}자</span>
@@ -319,7 +319,7 @@ function renderResult(analysis) {
           <p data-preview="${i}" class="mt-3 min-h-[1.25rem] border-l-2 border-violet-500/30 pl-2 text-xs leading-5 text-slate-400 break-keep">${highlight(cut.subtitle)}</p>
           <p class="mt-1 text-[10px] leading-5 text-slate-600">[강조] 로 감싼 말은 화면에서 보라색 · 고치면 9:16 미리보기·음성·자막 파일에 바로 반영됩니다.</p>
         </div>
-        <div class="bg-[#0B1020] rounded-xl p-5">
+        <div class="min-w-0 bg-[#0B1020] rounded-xl p-5">
           <div class="flex gap-4">
             <div class="min-w-0 flex-1">
               <p class="text-xs text-blue-400 font-bold mb-3">🎬 VISUAL DIRECTION</p>
@@ -334,7 +334,7 @@ function renderResult(analysis) {
             <button type="button" data-regen="${i}" class="shrink-0 text-[10px] font-bold px-2 py-1 rounded-full bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 transition">🔄 이 컷 장면 다시</button>
             <span data-credit="${i}" class="hidden min-w-0 flex-1 truncate text-[10px] text-slate-600"></span>
           </div>
-          <div data-vsearch-row="${i}" class="mt-2">
+          <div data-vsearch-row="${i}" class="mt-2 min-w-0 overflow-hidden">
             <div class="flex items-center gap-2">
               <label for="vkey-${i}" class="shrink-0 text-[10px] text-slate-500">🔎 검색어</label>
               <input
