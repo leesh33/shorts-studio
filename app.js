@@ -1417,12 +1417,13 @@ function setVisualStyle(name) {
   if (!VISUAL_STYLES[name] || state.visualStyle === name) return;
   state.visualStyle = name;
   paintStyleToggle();
+  /* 토스트는 한 줄 — 자세한 설명은 ⓘ 패널에 있습니다 */
   const note =
     name === 'video'
-      ? '🎬 움직이는 영상 — 실제 스톡 영상 클립을 먼저 찾습니다(Pixabay → Pexels → 위키미디어). 돌려받은 클립의 태그가 주제와 맞지 않으면 쓰지 않고, 실제 사진(줌·이동) → AI 순서로 채웁니다. 카드의 검색어를 직접 고쳐 다시 찾을 수 있습니다.'
+      ? '🎬 움직이는 영상 — 실제 클립을 먼저 찾고, 없으면 사진(줌·이동) → AI로 채웁니다.'
       : name === 'real'
-        ? '📷 실제 사진 — 실제 장소·사물 사진을 먼저 찾습니다. 대본을 다시 생성하면 컷마다 검색어(photoKo·photoEn)도 함께 만들어집니다.'
-        : `${VISUAL_STYLES[name].emoji} ${VISUAL_STYLES[name].label} 스타일로 새로 만듭니다 — 대본을 다시 생성해 주세요.`;
+        ? '📷 실제 사진 — 실제 장소·사물 사진을 먼저 찾고, 없으면 AI로 채웁니다.'
+        : `${VISUAL_STYLES[name].emoji} ${VISUAL_STYLES[name].label} — AI가 모든 컷을 새로 그립니다. 대본을 다시 생성해 주세요.`;
   toast(note);
   if (state.pkg) state.pkg.cuts.forEach((_, i) => paintCutImageMeta(i));
 }
