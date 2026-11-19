@@ -1,11 +1,11 @@
-# VIRAL REMIX — AI SHORTS STUDIO
+# TakeOne(테이크원) — AI 쇼츠 스튜디오
 
 바이럴 쇼츠의 **성공 공식(Viral DNA)** 을 읽어서, 내 주제로 새 숏폼 **대본 + 컷별 AI 장면 + 9:16 영상 파일**까지 만드는 웹 앱.
 
 - 라이브: https://shorts-studio-navy.vercel.app
 - 스택: 정적 HTML/Tailwind(빌드된 CSS 커밋) + Vercel Serverless Functions 4개
   (`/api/analyze-and-generate` · `/api/generate-image` · `/api/tts` · `/api/health`)
-- 화면: **VIRAL REMIX** 디자인(#090D19 · violet→blue 그라데이션) 유지
+- 화면: **TakeOne** 디자인(#090D19 · violet→blue 그라데이션) 유지
 
 ## 화면 흐름
 
@@ -15,6 +15,11 @@
 3. **Viral DNA Analysis** — 레퍼런스에서 읽은 `HOOK STRATEGY` / `AVG. CAPTION` / `RECOMMENDED PACE` + 근거(evidence).
    결과 제목 옆 **모드 배지**가 `GEMINI · 모델명` 또는 `LOCAL TEMPLATE` 로 지금 무엇이 만들었는지 정직하게 보여 줍니다.
 4. **Your Remix Script** — 6~8개 씬 카드(대본·연출·카메라·확인할 것). 강조 키워드는 보라색.
+   - **✏ 인라인 편집** — 카드마다 **🎙 내레이션**(음성으로 읽는 대사)과 **💬 자막**(화면에 뜨는 글자)을
+     다크 테마 입력창에서 바로 고칩니다. 고친 값은 같은 컷 상태에 바로 들어가서
+     **9:16 라이브 미리보기 자막**, **TTS 음성(/api/tts — 문장이 캐시 키라 옛 음성은 자동 폐기)**,
+     **.srt / 캔버스 자막**, **영상 파일**이 모두 같은 문장을 씁니다.
+     내레이션만 고치면 자막도 따라오고(자막을 따로 고친 컷은 그대로 둡니다), 카드에 `수정됨` 배지가 붙습니다.
 5. **✨ 이 대본으로 AI 음성 및 자막 렌더링 시작하기 →** — 9:16 라이브 플레이어 + **AI SCENE & VIDEO** 도구:
    - **🎨 컷별 AI 이미지 생성** — 컷마다 Gemini 이미지 모델로 9:16 실사 장면을 만들어 플레이어에 입힙니다(진행률·실패 사유 표시).
    - **🎬 영상 파일 다운로드** — 캔버스(1080×1920, 아이폰은 720×1280)에 켄번즈 장면 + 굵은 자막 + 진행바를 그리고
@@ -88,10 +93,11 @@ npm test             # 엔진·Gemini 정규화·무료 이미지 사다리·API
 ## 구조
 
 ```
-index.html                     VIRAL REMIX 화면 (Tailwind 클래스)
+index.html                     TakeOne 화면 (Tailwind 클래스)
 styles.css                     빌드된 Tailwind CSS (커밋됨)
 app.js                         폼·진행률·DNA·씬 렌더·9:16 플레이어·AI 이미지·영상 내보내기
 lib/engine.js                  URL 파싱 · 레퍼런스 분석 · 로컬 대본 생성 (순수 함수)
+lib/cut-edit.js                내레이션·자막 인라인 편집 규칙(음성 문장·TTS 캐시 키·편집 동기화)
 lib/gemini.js                  Gemini 프롬프트·응답 파싱·대본 정규화 (순수 함수)
 lib/gemini-api.js              Gemini REST 호출(모델·입력모드 사다리, 이미지 생성)
 lib/free-image.js              무료 이미지 사다리(Pollinations · HF FLUX) + 이미지 판별
@@ -102,6 +108,7 @@ api/generate-image.js          컷별 9:16 이미지 생성
 api/tts.js                     컷 내레이션 MP3
 api/health.js                  배포 확인 (키 유무만)
 tests/engine.test.mjs          로컬 엔진 테스트
+tests/cut-edit.test.mjs        내레이션·자막 편집 규칙 테스트
 tests/gemini.test.mjs          프롬프트·파싱·정규화 테스트
 tests/api.test.mjs             API 핸들러 테스트(네트워크 스텁, 키 비노출 확인)
 tests/tts.test.mjs             TTS 문장 정리·캐시·실패 처리

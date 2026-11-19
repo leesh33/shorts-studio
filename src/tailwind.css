@@ -16,6 +16,23 @@
   }
 }
 
+@layer components {
+  /* 씬 카드 인라인 편집 입력창 — 다크 UI 위에서 브라우저 기본 흰 배경이 비치지 않게 */
+  .edit-field {
+    background-color: #0f1526;
+    color: #e2e8f0;
+    caret-color: #a78bfa;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .edit-field:focus {
+    background-color: #121a2e;
+  }
+  .edit-field::placeholder {
+    color: #475569;
+  }
+}
+
 @layer utilities {
   /* 9:16 씬 카드의 필름 그레인 */
   .grain {

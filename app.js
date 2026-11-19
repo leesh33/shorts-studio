@@ -1,5 +1,5 @@
 /**
- * app.js — VIRAL REMIX · AI SHORTS STUDIO
+ * app.js — TakeOne(테이크원) · AI 쇼츠 스튜디오
  * 입력 → /api/analyze-and-generate(실제 레퍼런스 분석 + 대본 생성) → Viral DNA · 씬 대본 → 9:16 라이브 미리보기
  */
 import {
@@ -10,6 +10,7 @@ import {
   buildSrt,
   STRATEGY_INFO,
 } from './lib/engine.js';
+import { applyCutEdit, cutEditStats, narrationKey, speechText, staleNarrationKeys } from './lib/cut-edit.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -158,6 +159,8 @@ async function generate(event) {
   setLoading(true);
   startProgress();
   closePlayer();
+  editQueue.forEach((timer) => clearTimeout(timer));
+  editQueue.clear();
   $('#resultSection').classList.add('hidden');
 
   try {
@@ -240,6 +243,7 @@ function renderResult(analysis) {
   list.innerHTML = '';
   pkg.cuts.forEach((cut, i) => {
     const card = document.createElement('article');
+    const stats = cutEditStats(cut);
     card.className = 'rounded-2xl bg-[#131B2E] border border-white/10 p-6 hover:border-violet-500/40 transition';
     card.dataset.cue = String(i);
     card.innerHTML = `
@@ -247,16 +251,42 @@ function renderResult(analysis) {
         <div class="flex items-center gap-3 min-w-0">
           <span class="text-violet-400 font-black text-xl leading-none">${two(i + 1)}</span>
           <div class="min-w-0">
-            <h5 class="font-bold">Scene ${i + 1}</h5>
+            <h5 class="font-bold">Scene ${i + 1}<span data-edited="${i}" class="${
+              cut.edited ? '' : 'hidden '
+            }ml-2 align-middle text-[10px] font-bold text-amber-300 bg-amber-400/10 border border-amber-400/30 px-1.5 py-0.5 rounded-full">수정됨</span></h5>
             <p class="text-xs text-slate-500">${escapeHtml(cut.label)}</p>
           </div>
         </div>
-        <span class="shrink-0 text-xs text-slate-400 bg-white/5 px-3 py-2 rounded-full">${clock(cut.start)} - ${clock(cut.end)}</span>
+        <span data-time="${i}" class="shrink-0 text-xs text-slate-400 bg-white/5 px-3 py-2 rounded-full">${clock(cut.start)} - ${clock(cut.end)}</span>
       </div>
       <div class="grid md:grid-cols-2 gap-4">
         <div class="bg-[#0B1020] rounded-xl p-5">
-          <p class="text-xs text-violet-400 font-bold mb-3">🎙 SCRIPT / DIALOGUE</p>
-          <p class="text-sm leading-7 text-slate-200">${highlight(cut.subtitle)}</p>
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <p class="text-xs text-violet-400 font-bold">🎙 내레이션 · 음성</p>
+            <span data-count="narration" class="shrink-0 text-[10px] text-slate-500">${stats.narration}자</span>
+          </div>
+          <textarea
+            data-edit="narration"
+            data-cut="${i}"
+            rows="3"
+            spellcheck="false"
+            aria-label="Scene ${i + 1} 내레이션 (음성으로 읽는 대사)"
+            class="edit-field block w-full resize-y min-h-[5.5rem] bg-[#0F1526] border border-white/10 rounded-lg px-3 py-2 text-sm leading-6 text-slate-200 outline-none focus:border-violet-500 focus:bg-[#121A2E] transition"
+          >${escapeHtml(cut.narration ?? stripMarkup(cut.subtitle))}</textarea>
+          <div class="flex items-center justify-between gap-2 mb-2 mt-4">
+            <p class="text-xs text-sky-300 font-bold">💬 자막 · 화면</p>
+            <span data-count="subtitle" class="shrink-0 text-[10px] text-slate-500">${stats.subtitle}자</span>
+          </div>
+          <textarea
+            data-edit="subtitle"
+            data-cut="${i}"
+            rows="2"
+            spellcheck="false"
+            aria-label="Scene ${i + 1} 자막 (화면에 뜨는 글자)"
+            class="edit-field block w-full resize-y min-h-[3.5rem] bg-[#0F1526] border border-white/10 rounded-lg px-3 py-2 text-sm leading-6 text-slate-200 outline-none focus:border-violet-500 focus:bg-[#121A2E] transition"
+          >${escapeHtml(cut.subtitle)}</textarea>
+          <p data-preview="${i}" class="mt-3 min-h-[1.25rem] border-l-2 border-violet-500/30 pl-2 text-xs leading-5 text-slate-400 break-keep">${highlight(cut.subtitle)}</p>
+          <p class="mt-1 text-[10px] leading-5 text-slate-600">[강조] 로 감싼 말은 화면에서 보라색 · 고치면 9:16 미리보기·음성·자막 파일에 바로 반영됩니다.</p>
         </div>
         <div class="bg-[#0B1020] rounded-xl p-5 flex gap-4">
           <div class="min-w-0 flex-1">
@@ -291,6 +321,109 @@ function escapeHtml(value) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/* ──────────────── 씬 카드 인라인 편집 (내레이션 · 자막) ──────────────── */
+
+/** 타이핑이 멈춘 뒤 한 번만 무거운 후속 처리(TTS·타임라인·큐시트)를 돌립니다. */
+const editQueue = new Map();
+const EDIT_SYNC_MS = 450;
+
+/** 글자가 늘어난 만큼 입력창 높이를 따라 키웁니다. */
+function autoGrowField(field) {
+  if (!field || field.tagName !== 'TEXTAREA') return;
+  field.style.height = 'auto';
+  field.style.height = `${Math.max(24, Math.min(420, field.scrollHeight))}px`;
+}
+
+function cardOf(index) {
+  return $('#scenesList')?.querySelector(`[data-cue="${index}"]`) || null;
+}
+
+/** 카드 안의 글자 수·자막 미리보기·수정 배지를 지금 값으로 다시 칩니다. */
+function paintCutCard(cut, index) {
+  const card = cardOf(index);
+  if (!card) return;
+  const stats = cutEditStats(cut);
+  const narrationCountEl = card.querySelector('[data-count="narration"]');
+  const subtitleCountEl = card.querySelector('[data-count="subtitle"]');
+  if (narrationCountEl) narrationCountEl.textContent = `${stats.narration}자`;
+  if (subtitleCountEl) subtitleCountEl.textContent = `${stats.subtitle}자`;
+  const preview = card.querySelector(`[data-preview="${index}"]`);
+  if (preview) preview.innerHTML = highlight(cut.subtitle);
+  const badge = card.querySelector(`[data-edited="${index}"]`);
+  const edited = Boolean(cut.edited && (cut.edited.narration || cut.edited.subtitle));
+  if (badge) badge.classList.toggle('hidden', !edited);
+}
+
+/** 컷 카드의 입력 — 상태는 즉시, 음성·타임라인은 타이핑이 멈춘 뒤 한 번 반영합니다. */
+function onSceneEdit(event) {
+  const field = event.target.closest('[data-edit]');
+  if (!field || !state.pkg) return;
+  const index = Number(field.dataset.cut);
+  const cut = state.pkg.cuts[index];
+  if (!cut) return;
+  const kind = field.dataset.edit;
+  const result = applyCutEdit(cut, kind, field.value);
+  autoGrowField(field);
+
+  // 내레이션을 고쳐 자막이 따라온 경우, 자막 입력창도 같은 문장으로 맞춥니다.
+  const card = cardOf(index);
+  const subtitleField = card?.querySelector('[data-edit="subtitle"]');
+  if (result.subtitleUpdated && kind === 'narration' && subtitleField && subtitleField.value !== cut.subtitle) {
+    subtitleField.value = cut.subtitle;
+    autoGrowField(subtitleField);
+  }
+  if (result.changed) paintCutCard(cut, index);
+
+  // 9:16 미리보기 자막은 타이핑 중에도 바로 바뀝니다(재생 중 음성은 건드리지 않습니다).
+  if (result.changed) {
+    cut.beats = buildBeats(cut);
+    if (state.playerOpen && player.idx === index) {
+      const beat = beatAt(cut);
+      paintSubtitle(beat ? beat.text : '', false);
+    }
+  }
+
+  clearTimeout(editQueue.get(index));
+  editQueue.set(index, setTimeout(() => commitCutEdit(index), EDIT_SYNC_MS));
+}
+
+/** 편집 확정 — 새 문장의 음성을 받고(플레이어를 쓰는 중일 때), 타임라인·큐시트를 맞춥니다. */
+async function commitCutEdit(index) {
+  clearTimeout(editQueue.get(index));
+  editQueue.delete(index);
+  const cut = state.pkg?.cuts?.[index];
+  if (!cut) return;
+  cut.beats = buildBeats(cut);
+  pruneNarrationCache();
+  if (!state.playerOpen) return;
+
+  const entry = narrationEntry(cut);
+  if (narration.voice !== 'browser' && (!entry || entry.status !== 'ok')) {
+    paintNarrationNote(`고친 문장의 음성을 준비 중 · Scene ${index + 1}`, 'busy');
+    await fetchNarration(cut, { force: entry?.status === 'fail' });
+    if (state.pkg && retimeToNarration()) player.beatIdx = -1;
+    defaultNarrationNote();
+  }
+  player.beatIdx = -1;
+  updateFrame(true);
+  renderCues();
+}
+
+/** 문장이 바뀐 컷의 옛 음성은 버립니다 — 캐시가 부풀지 않게. */
+function pruneNarrationCache() {
+  const cuts = state.pkg?.cuts || [];
+  staleNarrationKeys([...narration.cache.keys()], cuts, narration.voice).forEach((key) => narration.cache.delete(key));
+}
+
+/** 컷 길이가 바뀌었을 때 카드의 시간 배지를 다시 칩니다. */
+function paintCardTimes() {
+  if (!state.pkg) return;
+  state.pkg.cuts.forEach((cut, i) => {
+    const el = cardOf(i)?.querySelector(`[data-time="${i}"]`);
+    if (el) el.textContent = `${clock(cut.start)} - ${clock(cut.end)}`;
+  });
 }
 
 /* ───────────────────── 모드 배지 · 키 확인 ───────────────────── */
@@ -560,18 +693,8 @@ async function generateCutImages() {
 
 /* ───────────────────── 🎙 내레이션 (중후한 남성 TTS) ───────────────────── */
 
-function speechText(cut) {
-  return stripMarkup(cut?.subtitle || '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function narrationKey(cut) {
-  return `${narration.voice}|${speechText(cut)}`;
-}
-
 function narrationEntry(cut) {
-  return narration.cache.get(narrationKey(cut)) || null;
+  return narration.cache.get(narrationKey(cut, narration.voice)) || null;
 }
 
 function narrationBuffer(cut) {
@@ -604,7 +727,7 @@ function setGain(on) {
 
 /** 서버 TTS 한 컷 — { status:'ok', buffer } 또는 { status:'fail', error }. force 면 실패 캐시도 다시 시도합니다. */
 async function fetchNarration(cut, { force = false } = {}) {
-  const key = narrationKey(cut);
+  const key = narrationKey(cut, narration.voice);
   const existing = narration.cache.get(key);
   if (existing && existing.status !== 'loading' && !(force && existing.status === 'fail')) return existing;
   const ctx = ensureAudioContext();
@@ -789,6 +912,7 @@ function retimeToNarration() {
   if (state.pkg?.meta) state.pkg.meta.totalSec = Number(cursor.toFixed(1));
   const meta = $('#scriptMeta');
   if (meta) meta.textContent = `총 ${Math.round(cursor)}초 · 컷당 ${(cursor / cuts.length).toFixed(1)}초 · ${styleLabel()} · 내레이션에 맞춘 길이`;
+  paintCardTimes();
   return true;
 }
 
@@ -1549,7 +1673,7 @@ function speak(cut) {
   if (!('speechSynthesis' in window)) return;
   try {
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(stripMarkup(cut.subtitle));
+    const u = new SpeechSynthesisUtterance(speechText(cut));
     u.lang = 'ko-KR';
     u.rate = player.rate;
     u.pitch = 0.98;
@@ -1648,7 +1772,9 @@ async function openPlayer() {
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   // 내레이션을 먼저 준비한 뒤 재생합니다 — 재생 중에 컷 길이가 바뀌면 말이 끊기기 때문입니다.
-  if (narration.voice !== 'browser' && !narrationCount().ready) {
+  // 문장을 고친 컷이 있어 일부만 준비된 경우에도 새 문장 음성을 마저 받습니다.
+  const prepared = narrationCount();
+  if (narration.voice !== 'browser' && prepared.ready < prepared.total) {
     pause();
     await prepareNarration();
     if (!state.playerOpen) return;
@@ -1681,7 +1807,7 @@ function scriptText() {
   ];
   const body = pkg.cuts.map(
     (c) =>
-      `[${c.index + 1}] ${clock(c.start)}-${clock(c.end)} · ${c.label}\n자막: ${c.subtitle}\n연출: ${c.visualKo}\n카메라: ${c.camera}\n`,
+      `[${c.index + 1}] ${clock(c.start)}-${clock(c.end)} · ${c.label}\n내레이션: ${c.narration || stripMarkup(c.subtitle)}\n자막: ${c.subtitle}\n연출: ${c.visualKo}\n카메라: ${c.camera}\n`,
   );
   return [...head, ...body].join('\n');
 }
@@ -1742,6 +1868,15 @@ function bind() {
   $('#remixForm').addEventListener('submit', generate);
   $('#ctaButton').addEventListener('click', openPlayer);
   $('#closePlayer').addEventListener('click', closePlayer);
+
+  /* 씬 카드 인라인 편집 — 카드가 다시 그려져도 살아 있게 목록에 위임합니다. */
+  const scenes = $('#scenesList');
+  scenes.addEventListener('input', onSceneEdit);
+  scenes.addEventListener('focusout', (event) => {
+    const field = event.target.closest('[data-edit]');
+    if (!field) return;
+    commitCutEdit(Number(field.dataset.cut));
+  });
 
   $('#playBtn').addEventListener('click', () => (player.playing ? pause() : play()));
   $('#bigPlay').addEventListener('click', () => play());

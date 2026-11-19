@@ -4,8 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#090D19" />
-    <title>VIRAL REMIX — AI SHORTS STUDIO</title>
-    <meta name="description" content="바이럴 쇼츠의 성공 공식을 분석하고, 내 주제로 새 숏폼 대본과 9:16 미리보기를 만들어 주는 AI 쇼츠 스튜디오." />
+    <title>TakeOne — AI 쇼츠 스튜디오</title>
+    <meta name="application-name" content="TakeOne" />
+    <meta name="description" content="테이크원(TakeOne) — 바이럴 쇼츠의 성공 공식을 분석하고, 내 주제로 새 숏폼 대본과 9:16 미리보기를 만들어 주는 AI 쇼츠 스튜디오." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="TakeOne" />
+    <meta property="og:title" content="TakeOne — AI 쇼츠 스튜디오" />
+    <meta property="og:description" content="바이럴 쇼츠를 읽고, 내 주제로 대본·자막·9:16 영상까지 만드는 AI 쇼츠 스튜디오." />
+    <meta name="twitter:card" content="summary" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%238b5cf6'/%3E%3Cstop offset='1' stop-color='%232563eb'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='24' fill='%23090D19'/%3E%3Crect x='18' y='18' width='64' height='64' rx='16' fill='url(%23g)'/%3E%3Ctext x='50' y='66' font-size='38' text-anchor='middle' fill='white'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -18,8 +24,8 @@
             <span class="text-xl">✦</span>
           </div>
           <div>
-            <h1 class="font-black tracking-wider text-lg leading-none">VIRAL REMIX</h1>
-            <p class="text-[10px] tracking-[3px] text-slate-500 mt-1">AI SHORTS STUDIO</p>
+            <h1 class="font-black tracking-wider text-xl leading-none">Take<span class="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-blue-400">One</span></h1>
+            <p class="text-[10px] tracking-[2.5px] text-slate-500 mt-1">테이크원 · AI 쇼츠 스튜디오</p>
           </div>
         </div>
         <div class="hidden sm:flex items-center gap-2 border border-white/10 bg-white/5 rounded-full px-4 py-2 text-xs text-slate-300">
@@ -198,6 +204,7 @@
           <div>
             <h4 class="text-xl font-bold">Your Remix Script</h4>
             <p class="text-sm text-slate-500 mt-1">새로운 주제: <span id="scriptTopic" class="text-slate-300">—</span></p>
+            <p id="editHint" class="text-xs text-slate-600 mt-1">TIP — 각 컷 카드의 <span class="text-slate-400">내레이션</span>·<span class="text-slate-400">자막</span>을 눌러 바로 고칠 수 있습니다.</p>
           </div>
           <p class="text-xs text-slate-500" id="scriptMeta">—</p>
         </div>
@@ -333,7 +340,7 @@
 
       <!-- Footer -->
       <footer class="text-center text-xs text-slate-600 mt-20 pb-8">
-        VIRAL REMIX STUDIO © 2026 · CREATE SOMETHING VIRAL
+        TAKEONE STUDIO © 2026 · ONE TAKE, EVERY TIME.
       </footer>
     </div>
 
