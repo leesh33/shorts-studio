@@ -513,7 +513,7 @@ function updateAiBanner() {
     if (body) {
       body.textContent =
         state.visualStyle === 'video'
-          ? '컷마다 실제로 움직이는 스톡 영상 클립을 먼저 찾습니다(Pexels는 키가 있을 때, 없으면 위키미디어 커먼즈 영상 · 라이선스 표기 포함). 클립이 없는 컷은 실제 사진(켄번즈) → AI 이미지로 채웁니다. 영상은 같은 출처 프록시(/api/video-proxy)로 흘려보내므로 미리보기 재생과 영상 파일 합성에 CORS 오류가 없습니다.'
+          ? '컷마다 실제로 움직이는 스톡 영상 클립을 먼저 찾습니다(Pixabay는 키가 있을 때 1순위, 없으면 Pexels → 위키미디어 커먼즈 영상 · 라이선스 표기 포함). 클립이 없는 컷은 실제 사진(켄번즈) → AI 이미지로 채웁니다. 영상은 같은 출처 프록시(/api/video-proxy)로 흘려보내므로 미리보기 재생과 영상 파일 합성에 CORS 오류가 없습니다.'
           : state.visualStyle === 'real'
             ? '컷마다 실제 장소·사물 사진을 위키미디어 커먼즈(라이선스 표기 포함)에서 먼저 찾습니다. 사진이 없는 컷만 무료 AI(Pollinations · FLUX.1-schnell)로 채웁니다. 서버가 이미지를 받아 data URL 로 넘기므로 영상 다운로드에 CORS 오류가 없습니다.'
             : 'GEMINI_API_KEY 가 없어도 컷별 9:16 장면을 무료 제공자(Pollinations · FLUX.1-schnell)로 만듭니다. 서버가 이미지 바이트를 받아 data URL 로 넘기므로 영상 다운로드에 CORS 오류가 없습니다.';
@@ -709,6 +709,7 @@ function providerName(provider) {
   if (provider === 'gemini') return 'Gemini';
   if (provider === 'hf-flux-free') return 'FLUX.1-schnell 무료';
   if (provider === 'pollinations-free') return 'Pollinations 무료';
+  if (provider === 'pixabay') return 'Pixabay 스톡 영상';
   if (provider === 'pexels') return 'Pexels 스톡 영상';
   if (provider === 'wikimedia-commons') return '위키미디어 커먼즈';
   if (provider === 'wikipedia-ko') return '위키백과';
@@ -1292,7 +1293,7 @@ function setVisualStyle(name) {
   paintStyleToggle();
   const note =
     name === 'video'
-      ? '🎬 움직이는 영상 — 실제 스톡 영상 클립(Pexels → 위키미디어 커먼즈)을 먼저 찾습니다. 클립이 없으면 실제 사진, 그다음 AI로 채웁니다. 대본을 다시 생성하면 컷마다 검색어(photoKo·photoEn)도 함께 만들어집니다.'
+      ? '🎬 움직이는 영상 — 실제 스톡 영상 클립(Pixabay → Pexels → 위키미디어 커먼즈)을 먼저 찾습니다. 클립이 없으면 실제 사진, 그다음 AI로 채웁니다. 대본을 다시 생성하면 컷마다 검색어(photoKo·photoEn)도 함께 만들어집니다.'
       : name === 'real'
         ? '📷 실제 사진 — 실제 장소·사물 사진을 먼저 찾습니다. 대본을 다시 생성하면 컷마다 검색어(photoKo·photoEn)도 함께 만들어집니다.'
         : `${VISUAL_STYLES[name].emoji} ${VISUAL_STYLES[name].label} 스타일로 새로 만듭니다 — 대본을 다시 생성해 주세요.`;
@@ -1312,7 +1313,7 @@ function paintStyleToggle() {
   if (note) {
     note.textContent =
       state.visualStyle === 'video'
-        ? '실제로 움직이는 스톡 클립을 먼저 찾습니다(Pexels → 위키미디어 커먼즈). 클립이 없는 컷은 실제 사진(켄번즈) → AI 이미지로 채우고, 9:16 미리보기·영상 파일에서 장면이 실제로 움직입니다.'
+        ? '실제로 움직이는 스톡 클립을 먼저 찾습니다(Pixabay → Pexels → 위키미디어 커먼즈). 클립이 없는 컷은 실제 사진(켄번즈) → AI 이미지로 채우고, 9:16 미리보기·영상 파일에서 장면이 실제로 움직입니다.'
         : state.visualStyle === 'real'
           ? '실제 장소·사물 사진을 먼저 찾습니다(위키미디어 커먼즈 → 위키백과). 롯데타워 같은 실제 대상이 그대로 나오고, 사진이 없는 컷만 AI로 채웁니다.'
           : state.visualStyle === '3d'
