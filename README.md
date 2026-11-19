@@ -11,6 +11,8 @@
 
 1. **Create Your Remix** — `01. Reference Video`(유튜브 숏츠 URL) + `02. Your New Topic`(한 줄)
    + `03. Visual Style`(**🎬 움직이는 영상(스톡 클립)** / **📷 실제 사진(실사 우선)** / 🎨 3D 입체 렌더링(기본) / 🎥 실사 시네마틱)
+     — 제목 옆 **ⓘ** 를 누르면 네 스타일을 두 묶음(**실제 자료 찾기** = 🎬 움직이는 영상 · 📷 실제 사진 / **AI로 새로 그리기** = 🎨 3D · 🎥 실사 시네마틱)으로
+     설명하는 안내 카드가 열리고, 다시 누르거나 바깥을 누르면 닫힙니다(모바일·데스크톱 동일).
    + `04. Video Length`(**15초(5컷) / 30초(8컷, 기본) / 45초(11컷) / 60초(15컷)**).
 2. **AI ANALYSIS ENGINE** — 실제 요청이 도는 동안 3단계 진행률.
 3. **Viral DNA Analysis** — 레퍼런스에서 읽은 `HOOK STRATEGY` / `AVG. CAPTION` / `RECOMMENDED PACE` + 근거(evidence).
@@ -139,6 +141,7 @@ tests/gemini.test.mjs          프롬프트·파싱·정규화 테스트
 tests/api.test.mjs             API 핸들러 테스트(네트워크 스텁, 키 비노출 확인)
 tests/tts.test.mjs             TTS 문장 정리·캐시·실패 처리
 tests/visual-style.test.mjs    실제 사진/3D/실사 스타일 프롬프트·API 반영
+tests/style-help.test.mjs      ⓘ 안내 툴팁 문구·토글 배선·빌드된 CSS 확인
 tests/real-photo.test.mjs      커먼즈·위키백과 검색·필터·프록시 테스트
 tests/stock-video.test.mjs     Pixabay·Pexels·커먼즈 영상 검색·선택·프록시 허용 목록 테스트
 tools/serve.mjs                로컬 미리보기 서버

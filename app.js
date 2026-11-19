@@ -2653,6 +2653,36 @@ function doExport(kind) {
 
 /* ───────────────────────── 이벤트 ───────────────────────── */
 
+/* ───────────────────── ❓ 비주얼 스타일 안내 ───────────────────── */
+
+/** 안내 툴팁 — ⓘ 를 누르면 열리고, 다시 누르거나 바깥을 누르면 닫힙니다. */
+function setStyleHelp(open) {
+  const btn = $('#styleHelpBtn');
+  const panel = $('#styleHelpPanel');
+  if (!btn || !panel) return;
+  panel.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+}
+
+function bindStyleHelp() {
+  const btn = $('#styleHelpBtn');
+  const panel = $('#styleHelpPanel');
+  if (!btn || !panel) return;
+  btn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setStyleHelp(panel.hidden);
+  });
+  /* 카드 안쪽 탭은 닫지 않습니다(바깥 탭만 닫기). */
+  panel.addEventListener('click', (event) => event.stopPropagation());
+  document.addEventListener('click', () => setStyleHelp(false));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !panel.hidden) {
+      setStyleHelp(false);
+      btn.focus();
+    }
+  });
+}
+
 function bind() {
   $('#remixForm').addEventListener('submit', generate);
   $('#ctaButton').addEventListener('click', openPlayer);
@@ -2727,6 +2757,7 @@ function bind() {
 
   $$('[data-voice]').forEach((btn) => btn.addEventListener('click', () => setNarrationVoice(btn.dataset.voice)));
   $$('[data-style]').forEach((btn) => btn.addEventListener('click', () => setVisualStyle(btn.dataset.style)));
+  bindStyleHelp();
   $$('[data-length]').forEach((btn) => btn.addEventListener('click', () => setLength(btn.dataset.length)));
 
   $$('[data-export]').forEach((btn) => btn.addEventListener('click', () => doExport(btn.dataset.export)));
