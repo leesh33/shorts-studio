@@ -252,6 +252,21 @@ test('matchClip: 그림·애니메이션 클립은 실사 자리에 쓰지 않�
   assert.ok(matchClip({ tags: ['dog', 'eyes', 'closeup'], title: 'dog, eyes, closeup' }, terms).level >= 1);
 });
 
+test('matchClip: 꾸미는 말(glass) 하나만 맞는 클립은 버린다', () => {
+  const terms = queryTerms({ query: 'glass elevator', kind: 'generic_scene' });
+  assert.deepEqual(terms.required, ['elevator']);
+  assert.equal(matchClip({ tags: ['beer', 'glass', 'drink', 'wheat'], title: 'beer, glass, drink, wheat' }, terms).level, 0);
+  assert.ok(matchClip({ tags: ['elevator', 'glass', 'building'], title: 'elevator, glass, building' }, terms).level >= 1);
+});
+
+test('matchClip: 고유명사가 카드에 보이는 태그에 없으면(뒤 태그에만 있으면) 버린다', () => {
+  const terms = queryTerms({ query: 'Lotte World Tower', kind: 'specific_landmark' });
+  const hidden = { tags: ['seoul', 'hangang river', 'sunrise', 'lotte world tower'], title: 'seoul, hangang river, south korea, sunrise' };
+  assert.equal(matchClip(hidden, terms).level, 0);
+  const shown = { tags: ['seoul', 'hangang river', 'lotte world tower', 'night'], title: 'seoul, hangang river, lotte world tower, night' };
+  assert.ok(matchClip(shown, terms).level >= 1);
+});
+
 test('bestMatch: 한국어 제목과 영어 태그를 함께 본다', () => {
   const termsList = videoTermSets({ ko: '롯데월드타워', en: 'Lotte World Tower', kind: 'specific_landmark' });
   assert.equal(bestMatch({ tags: [], title: '롯데월드타워 야경' }, termsList).level, 2);
